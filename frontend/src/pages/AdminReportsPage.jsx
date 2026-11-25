@@ -1,12 +1,21 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import PortalHeading from '../components/common/PortalHeading';
 import { AdminBarList, AdminTrendChart } from '../components/admin/AdminCharts';
 import { AdminNotice, AdminSection, AdminStatCard, AdminTable, formatAdminDate } from '../components/admin/AdminComponents';
-import { getAdminReports } from '../services/api';
+import { getAdminReportLookups, getAdminReports } from '../services/api';
 
 const reportToday = new Date();
 const reportRangeStart = new Date(reportToday);
 reportRangeStart.setDate(reportToday.getDate() - 29);
+
+const reportLabels = {
+  appointments: 'Appointment report',
+  'service-trends': 'Specialty and service trends',
+  'clinic-activity': 'Clinic activity report',
+  operational: 'Operational report',
+};
 
 function csvCell(value) {
   const text = String(value ?? '');
@@ -14,78 +23,357 @@ function csvCell(value) {
   return `"${protectedText.replaceAll('"', '""')}"`;
 }
 
-function exportCsv(reports) {
-  const sections = [
-    ['Patients by status', ['Registered', reports.patients.total], ['Active', reports.patients.active], ['Inactive', reports.patients.inactive], ['Registrations in range', reports.patients.registrations]],
-    ['Appointments by status', ['Status', 'Count'], ...reports.appointmentsByStatus.map((row) => [row.status, row.count])],
-    ['Appointments by day', ['Date', 'Appointments'], ...reports.appointmentTrend.map((row) => [row.date, row.count])],
-    ['Clinics', ['Clinic', 'Doctors', 'Appointments'], ...reports.clinics.map((row) => [row.name, row.doctorCount, row.appointmentCount])],
-    ['Doctors by specialty', ['Specialty', 'Doctors', 'Active', 'Inactive'], ...reports.doctorsBySpecialty.map((row) => [row.name, row.doctors, row.active, row.inactive])],
-    ['Support by category', ['Category', 'Count'], ...reports.supportByCategory.map((row) => [row.category, row.count])],
-  ];
-  const content = sections.flatMap((rows) => rows.map((row) => row.map(csvCell).join(','))).join('\r\n');
+function downloadCsv(title, columns, rows) {
+  const content = [columns.map((column) => column.label), ...rows.map((row) => columns.map((column) => row[column.key]))]
+    .map((row) => row.map(csvCell).join(',')).join('\r\n');
   const blob = new Blob([content], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = 'mediconnect-admin-report.csv';
+  link.download = `mediconnect-${title.toLowerCase().replaceAll(/[^a-z0-9]+/g, '-')}.csv`;
   link.click();
   URL.revokeObjectURL(url);
 }
 
+function addPdfChart(doc, title, values, labelKey = 'label', valueKey = 'count', chartType = 'bar') {
+  if (!values.length) return doc.lastAutoTable?.finalY ? doc.lastAutoTable.finalY + 10 : 35;
+  let y = doc.lastAutoTable?.finalY ? doc.lastAutoTable.finalY + 12 : 35;
+  if (y > 150) {
+    doc.addPage();
+    y = 24;
+  }
+  doc.setFontSize(12);
+  doc.setTextColor(25, 54, 51);
+  doc.text(title, 14, y);
+  const chartTop = y + 8;
+  const chartWidth = 250;
+  if (chartType === 'trend') {
+    const maxValue = Math.max(1, ...values.map((item) => Number(item[valueKey] || 0)));
+    const points = values.map((item, index) => ({
+      x: 14 + (values.length < 2 ? 0 : (index / (values.length - 1)) * chartWidth),
+      y: chartTop + 60 - (Number(item[valueKey] || 0) / maxValue) * 55,
+    }));
+    doc.setDrawColor(0, 104, 95);
+    doc.setLineWidth(0.7);
+    for (let index = 1; index < points.length; index += 1) {
+      doc.line(points[index - 1].x, points[index - 1].y, points[index].x, points[index].y);
+    }
+    doc.setFontSize(8);
+    doc.setTextColor(65, 81, 78);
+    doc.text(String(values[0][labelKey]), 14, chartTop + 72);
+    doc.text(String(values[Math.floor(values.length / 2)][labelKey]), 14 + chartWidth / 2, chartTop + 72, { align: 'center' });
+    doc.text(String(values[values.length - 1][labelKey]), 14 + chartWidth, chartTop + 72, { align: 'right' });
+    return chartTop + 80;
+  }
+  const maxBars = Math.min(values.length, 12);
+  const barHeight = Math.min(7, 72 / maxBars);
+  const maxValue = Math.max(1, ...values.slice(0, maxBars).map((item) => Number(item[valueKey] || 0)));
+  values.slice(0, maxBars).forEach((item, index) => {
+    const barY = chartTop + index * (barHeight + 1);
+    const label = String(item[labelKey] ?? '').replaceAll('_', ' ').slice(0, 30);
+    const value = Number(item[valueKey] || 0);
+    doc.setFontSize(8);
+    doc.setTextColor(65, 81, 78);
+    doc.text(label, 14, barY + barHeight - 1);
+    doc.setFillColor(0, 104, 95);
+    doc.rect(92, barY, chartWidth * value / maxValue, barHeight, 'F');
+    doc.setTextColor(25, 54, 51);
+    doc.text(String(value), 96 + chartWidth * value / maxValue, barY + barHeight - 1);
+  });
+  return chartTop + maxBars * (barHeight + 1) + 4;
+}
+
+function exportPdf(filters, reports, view, lookups) {
+  const doc = new jsPDF({ orientation: 'landscape' });
+  doc.setFontSize(18);
+  doc.setTextColor(0, 104, 95);
+  doc.text('MediConnect', 14, 16);
+  doc.setFontSize(14);
+  doc.setTextColor(25, 54, 51);
+  doc.text(reportLabels[filters.reportType], 14, 25);
+  doc.setFontSize(9);
+  doc.setTextColor(80, 95, 92);
+  doc.text(`Period: ${filters.from} to ${filters.to} · Grouping: ${filters.grouping} · Generated: ${new Date().toLocaleString()}`, 14, 31);
+  const selectedFilters = [
+    filters.clinicId && `Clinic: ${lookups.clinics.find((item) => item.id === filters.clinicId)?.name || 'Selected clinic'}`,
+    filters.specialtyId && `Specialty: ${lookups.specialties.find((item) => item.id === filters.specialtyId)?.name || 'Selected specialty'}`,
+    filters.doctorId && `Doctor: ${lookups.doctors.find((item) => item.id === filters.doctorId)?.name || 'Selected doctor'}`,
+    filters.status && `Outcome: ${filters.status.replaceAll('_', ' ')}`,
+  ].filter(Boolean);
+  const filterLines = doc.splitTextToSize(
+    `Filters: ${selectedFilters.length ? selectedFilters.join(' · ') : 'All clinics, specialties, doctors, and outcomes'}`,
+    268,
+  );
+  doc.text(filterLines, 14, 37);
+  const summaryStartY = 37 + filterLines.length * 4 + 3;
+  const summaryRows = [
+    ['Appointments', reports.summary.total],
+    ['Completed', reports.summary.completed],
+    ['Pending', reports.summary.pending],
+    ['Cancelled', reports.summary.cancelled],
+    ['Rescheduled', reports.summary.rescheduled],
+    ['No-show', reports.summary.noShow],
+  ];
+  autoTable(doc, {
+    startY: summaryStartY, head: [['Metric', 'Count']], body: summaryRows,
+    theme: 'grid', styles: { fontSize: 8 }, headStyles: { fillColor: [0, 104, 95] },
+    margin: { left: 14, right: 14 },
+  });
+  const chartBottom = addPdfChart(
+    doc, view.chart.title, view.chart.rows,
+    view.chart.labelKey, view.chart.valueKey, view.chart.type,
+  );
+  if (filters.reportType === 'appointments') {
+    autoTable(doc, {
+      startY: Math.max(doc.lastAutoTable.finalY + 10, chartBottom),
+      head: [view.columns.map((column) => column.label)],
+      body: view.rows.map((row) => view.columns.map((column) => String(row[column.key] ?? '—'))),
+      theme: 'striped', styles: { fontSize: 7 }, headStyles: { fillColor: [0, 104, 95] },
+      margin: { left: 14, right: 14 },
+    });
+  } else {
+    autoTable(doc, {
+      startY: Math.max(doc.lastAutoTable.finalY + 10, chartBottom),
+      head: [view.columns.map((column) => column.label)],
+      body: view.rows.map((row) => view.columns.map((column) => String(row[column.key] ?? '—'))),
+      theme: 'striped', styles: { fontSize: 8 }, headStyles: { fillColor: [0, 104, 95] },
+      margin: { left: 14, right: 14 },
+    });
+  }
+  if (filters.reportType === 'service-trends' && !reports.serviceUsageSupported) {
+    doc.addPage();
+    doc.setFontSize(10);
+    doc.setTextColor(70, 70, 70);
+    const noteLines = doc.splitTextToSize(reports.serviceUsageNote, 260);
+    doc.text(noteLines, 14, 22);
+  }
+  const pageCount = doc.getNumberOfPages();
+  for (let page = 1; page <= pageCount; page += 1) {
+    doc.setPage(page);
+    doc.setFontSize(8);
+    doc.setTextColor(110, 110, 110);
+    doc.text(`Page ${page} of ${pageCount}`, 280, 200, { align: 'right' });
+  }
+  doc.save(`mediconnect-${filters.reportType}-${filters.from}-${filters.to}.pdf`);
+}
+
+function selectClass() {
+  return 'mt-1.5 h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-on-surface';
+}
+
 export default function AdminReportsPage() {
-  const [filters, setFilters] = useState({ from: reportRangeStart.toISOString().slice(0, 10), to: reportToday.toISOString().slice(0, 10) });
+  const [filters, setFilters] = useState({
+    from: reportRangeStart.toISOString().slice(0, 10),
+    to: reportToday.toISOString().slice(0, 10),
+    reportType: 'appointments',
+    grouping: 'daily',
+    clinicId: '',
+    specialtyId: '',
+    doctorId: '',
+    status: '',
+  });
+  const [appliedFilters, setAppliedFilters] = useState(filters);
   const [reports, setReports] = useState(null);
+  const [lookups, setLookups] = useState({ clinics: [], specialties: [], doctors: [] });
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [lookupsLoading, setLookupsLoading] = useState(true);
+  const [reportError, setReportError] = useState('');
+  const [lookupsError, setLookupsError] = useState('');
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
-    getAdminReports(filters)
-      .then(({ data }) => { if (active) { setReports(data); setError(''); } })
-      .catch((requestError) => { if (active) setError(requestError.message || 'Unable to load reports.'); })
+    getAdminReportLookups()
+      .then(({ data }) => { if (active) setLookups(data); })
+      .catch((requestError) => { if (active) setLookupsError(requestError.message || 'Unable to load report filters.'); })
+      .finally(() => { if (active) setLookupsLoading(false); });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    getAdminReports(appliedFilters)
+      .then(({ data }) => { if (active) { setReports(data); setReportError(''); } })
+      .catch((requestError) => { if (active) setReportError(requestError.message || 'Unable to load reports.'); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [filters]);
+  }, [appliedFilters]);
+
+  const groupingLabel = appliedFilters.grouping === 'daily'
+    ? 'day'
+    : appliedFilters.grouping === 'weekly' ? 'week' : 'month';
+  const view = useMemo(() => {
+    if (!reports) return null;
+    if (appliedFilters.reportType === 'appointments') {
+      const columns = [
+        { key: 'scheduledStart', label: 'Scheduled' },
+        { key: 'doctorName', label: 'Doctor' },
+        { key: 'specialtyName', label: 'Specialty' },
+        { key: 'clinicName', label: 'Clinic' },
+        { key: 'status', label: 'Status' },
+        { key: 'consultationType', label: 'Visit type' },
+      ];
+      return {
+        rows: reports.appointmentRows,
+        columns,
+        chart: { title: `Appointments by ${groupingLabel} period`, rows: reports.appointmentTrend, labelKey: 'period', valueKey: 'count', type: 'trend' },
+      };
+    }
+    if (appliedFilters.reportType === 'service-trends') {
+      const rows = reports.appointmentsBySpecialty.map((item) => ({ specialtyName: item.name, appointments: item.total }));
+      return {
+        rows,
+        columns: [{ key: 'specialtyName', label: 'Specialty' }, { key: 'appointments', label: 'Appointments' }],
+        chart: { title: 'Appointments by specialty', rows, labelKey: 'specialtyName', valueKey: 'appointments' },
+      };
+    }
+    if (appliedFilters.reportType === 'clinic-activity') {
+      const rows = reports.appointmentsByClinic;
+      return {
+        rows,
+        columns: [
+          { key: 'name', label: 'Clinic' }, { key: 'total', label: 'Appointments' },
+          { key: 'completed', label: 'Completed' }, { key: 'cancelled', label: 'Cancelled' },
+          { key: 'pending', label: 'Pending' }, { key: 'noShow', label: 'No-show' },
+        ],
+        chart: { title: 'Appointments by clinic', rows, labelKey: 'name', valueKey: 'total' },
+      };
+    }
+    const rows = reports.appointmentsByStatus;
+    return {
+      rows,
+      columns: [{ key: 'status', label: 'Workflow outcome' }, { key: 'count', label: 'Appointments' }],
+      chart: { title: 'Operational status', rows, labelKey: 'status', valueKey: 'count' },
+    };
+  }, [groupingLabel, appliedFilters.reportType, reports]);
+
+  const updateFilter = (key, value) => setFilters((current) => ({
+    ...current,
+    [key]: value,
+    ...(['clinicId', 'specialtyId'].includes(key) ? { doctorId: '' } : {}),
+  }));
+  const doctors = lookups.doctors.filter((doctor) => (
+    (!filters.clinicId || doctor.clinicId === filters.clinicId)
+    && (!filters.specialtyId || doctor.primarySpecialtyId === filters.specialtyId)
+  ));
+  const applyFilters = (event) => {
+    event.preventDefault();
+    setReportError('');
+    setLoading(true);
+    setAppliedFilters({ ...filters });
+  };
+  const exportRows = view?.rows || [];
 
   return (
     <>
-      <PortalHeading eyebrow="Network intelligence" title="Reports & Analytics" description="Review dated operational reports from appointment, patient, clinic, and support records." actions={reports && <button type="button" onClick={() => exportCsv(reports)} className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-on-primary"><span className="material-symbols-outlined text-lg">download</span>Export CSV</button>} />
-      {error && <AdminNotice>{error}</AdminNotice>}
-      <AdminSection title="Report scope" description="Choose a range up to 12 months. Account totals include all records; trends and activity use this range.">
-        <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
-          <label className="text-xs font-medium text-on-surface-variant">From<input type="date" value={filters.from} max={filters.to} onChange={(event) => setFilters((current) => ({ ...current, from: event.target.value }))} className="mt-1.5 h-11 w-full rounded-lg border border-slate-200 px-3 text-sm text-on-surface" /></label>
-          <label className="text-xs font-medium text-on-surface-variant">To<input type="date" value={filters.to} min={filters.from} onChange={(event) => setFilters((current) => ({ ...current, to: event.target.value }))} className="mt-1.5 h-11 w-full rounded-lg border border-slate-200 px-3 text-sm text-on-surface" /></label>
-          <p className="text-xs text-on-surface-variant sm:pb-3">{formatAdminDate(filters.from)} — {formatAdminDate(filters.to)}</p>
-        </div>
+      <PortalHeading
+        eyebrow="Network intelligence"
+        title="Reports & Analytics"
+        description="Preview filtered appointment, specialty, clinic, and operational reports, then export a shareable PDF."
+        actions={reports && view && (
+          <>
+            <button type="button" onClick={() => downloadCsv(reportLabels[appliedFilters.reportType], view.columns, exportRows)} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-slate-200 px-4 text-sm font-semibold text-on-surface hover:bg-surface-container">
+              <span className="material-symbols-outlined text-lg">download</span>Export CSV
+            </button>
+            <button type="button" onClick={() => exportPdf(appliedFilters, reports, view, lookups)} className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-on-primary">
+              <span className="material-symbols-outlined text-lg">picture_as_pdf</span>Export PDF
+            </button>
+          </>
+        )}
+      />
+      {(lookupsError || reportError) && <AdminNotice>{lookupsError || reportError}</AdminNotice>}
+      <AdminSection title="Report scope" description="Choose a range up to 12 months and refine the report by clinic, doctor, specialty, and appointment outcome.">
+        <form onSubmit={applyFilters}>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <label className="text-xs font-medium text-on-surface-variant">Report type
+              <select value={filters.reportType} onChange={(event) => updateFilter('reportType', event.target.value)} className={selectClass()}>
+                {Object.entries(reportLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select>
+            </label>
+            <label className="text-xs font-medium text-on-surface-variant">From
+              <input type="date" value={filters.from} max={filters.to} onChange={(event) => updateFilter('from', event.target.value)} className={selectClass()} />
+            </label>
+            <label className="text-xs font-medium text-on-surface-variant">To
+              <input type="date" value={filters.to} min={filters.from} onChange={(event) => updateFilter('to', event.target.value)} className={selectClass()} />
+            </label>
+            <label className="text-xs font-medium text-on-surface-variant">Group by
+              <select value={filters.grouping} onChange={(event) => updateFilter('grouping', event.target.value)} className={selectClass()}>
+                <option value="daily">Day</option><option value="weekly">Week</option><option value="monthly">Month</option>
+              </select>
+            </label>
+            <label className="text-xs font-medium text-on-surface-variant">Clinic
+              <select value={filters.clinicId} onChange={(event) => updateFilter('clinicId', event.target.value)} className={selectClass()}>
+                <option value="">All clinics</option>
+                {lookups.clinics.map((clinic) => <option key={clinic.id} value={clinic.id}>{clinic.name}{clinic.isActive ? '' : ' (inactive)'}</option>)}
+              </select>
+            </label>
+            <label className="text-xs font-medium text-on-surface-variant">Specialty
+              <select value={filters.specialtyId} onChange={(event) => updateFilter('specialtyId', event.target.value)} className={selectClass()}>
+                <option value="">All specialties</option>
+                {lookups.specialties.map((specialty) => <option key={specialty.id} value={specialty.id}>{specialty.name}</option>)}
+              </select>
+            </label>
+            <label className="text-xs font-medium text-on-surface-variant">Doctor
+              <select value={filters.doctorId} onChange={(event) => updateFilter('doctorId', event.target.value)} className={selectClass()}>
+                <option value="">All doctors</option>
+                {doctors.map((doctor) => <option key={doctor.id} value={doctor.id}>{doctor.name}</option>)}
+              </select>
+            </label>
+            <label className="text-xs font-medium text-on-surface-variant">Appointment outcome
+              <select value={filters.status} onChange={(event) => updateFilter('status', event.target.value)} className={selectClass()}>
+                <option value="">All outcomes</option><option value="confirmed">Confirmed</option><option value="completed">Completed</option>
+                <option value="cancelled">Cancelled</option><option value="no_show">No-show</option>
+              </select>
+            </label>
+          </div>
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-xs text-on-surface-variant">{formatAdminDate(filters.from)} — {formatAdminDate(filters.to)}</p>
+            <button type="submit" disabled={loading || lookupsLoading} className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-primary px-5 text-sm font-semibold text-on-primary disabled:opacity-60">
+              <span className="material-symbols-outlined text-lg">filter_alt</span>{loading ? 'Generating...' : 'Apply filters'}
+            </button>
+          </div>
+        </form>
       </AdminSection>
-      {loading && !reports ? <p className="py-12 text-center text-on-surface-variant">Generating reports...</p> : reports && (
-        <>
-          <section aria-label="Patient totals" className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <AdminStatCard label="Registered patients" value={reports.patients.total} icon="groups" />
-            <AdminStatCard label="Active accounts" value={reports.patients.active} icon="verified_user" accent="blue" />
-            <AdminStatCard label="Inactive accounts" value={reports.patients.inactive} icon="person_off" accent="amber" />
-            <AdminStatCard label="New in range" value={reports.patients.registrations} icon="person_add" accent="primary" />
+      {loading && !reports ? <p className="py-12 text-center text-on-surface-variant">Generating reports...</p> : reports && view && (
+        <div className="mt-5 space-y-5">
+          <section aria-label="Appointment totals" className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+            <AdminStatCard label="Appointments" value={reports.summary.total} icon="event" />
+            <AdminStatCard label="Completed" value={reports.summary.completed} icon="task_alt" accent="blue" />
+            <AdminStatCard label="Pending" value={reports.summary.pending} icon="pending_actions" accent="amber" />
+            <AdminStatCard label="Cancelled" value={reports.summary.cancelled} icon="event_busy" accent="rose" />
+            <AdminStatCard label="Rescheduled" value={reports.summary.rescheduled} icon="event_repeat" accent="blue" />
+            <AdminStatCard label="No-show" value={reports.summary.noShow} icon="person_off" accent="amber" />
           </section>
-          <div className="mt-5 grid gap-5 xl:grid-cols-2">
-            <AdminSection title="Appointment fulfillment" description="Appointments by scheduled start in the selected date range.">
-              <AdminTrendChart title="Daily appointment volume" data={reports.appointmentTrend} />
-              <div className="mt-6"><AdminBarList title="Appointments by status" rows={reports.appointmentsByStatus} labelKey="status" /></div>
+          {appliedFilters.reportType === 'service-trends' && (
+            <AdminNotice type="info">{reports.serviceUsageNote}</AdminNotice>
+          )}
+          <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+            <AdminSection title={view.chart.title} description="Counts are based on scheduled appointment start times in the selected date range.">
+              <AdminTrendChart title={`${groupingLabel[0].toUpperCase()}${groupingLabel.slice(1)} appointment volume`} data={reports.appointmentTrend} grouping={appliedFilters.grouping} />
+              {appliedFilters.reportType === 'service-trends' && <div className="mt-6"><AdminBarList title="Appointments by specialty" rows={reports.appointmentsBySpecialty} labelKey="name" valueKey="total" /></div>}
+              {appliedFilters.reportType === 'operational' && (
+                <div className="mt-6 grid gap-6 md:grid-cols-2">
+                  <AdminBarList title="Visit type" rows={reports.consultationTypes} labelKey="type" />
+                  <AdminBarList title="Appointment outcome" rows={reports.appointmentsByStatus} labelKey="status" />
+                </div>
+              )}
+              {appliedFilters.reportType === 'clinic-activity' && <div className="mt-6"><AdminBarList title="Appointments by clinic" rows={reports.appointmentsByClinic} labelKey="name" valueKey="total" /></div>}
+              {appliedFilters.reportType === 'operational' && (
+                <div className="mt-6 grid gap-6 md:grid-cols-2">
+                  <AdminTrendChart title="Cancellations" data={reports.cancellationTrend} grouping={appliedFilters.grouping} />
+                  <AdminTrendChart title="Reschedules" data={reports.rescheduleTrend} grouping={appliedFilters.grouping} />
+                </div>
+              )}
             </AdminSection>
-            <AdminSection title="Clinical network" description="Doctor activity by specialty and clinic appointment load.">
-              <AdminBarList title="Doctors by specialty" rows={reports.doctorsBySpecialty} labelKey="name" valueKey="doctors" />
-              <div className="mt-6"><AdminTable columns={[{ key: 'name', label: 'Clinic' }, { key: 'doctorCount', label: 'Doctors' }, { key: 'appointmentCount', label: 'Appointments' }]} rows={reports.clinics} /></div>
-            </AdminSection>
-            <AdminSection title="Support insights" description="Ticket counts by creation date within the selected range.">
-              <AdminBarList title="Tickets by category" rows={reports.supportByCategory} labelKey="category" />
-              <div className="mt-6"><AdminBarList title="Tickets by status" rows={reports.supportByStatus} labelKey="status" /></div>
-            </AdminSection>
-            <AdminSection title="Team workload" description="Assigned tickets and resolutions recorded during the selected range.">
-              <AdminTable columns={[{ key: 'name', label: 'Staff member' }, { key: 'email', label: 'Email' }, { key: 'assignedTickets', label: 'Assigned total' }, { key: 'active', label: 'Active' }, { key: 'resolved', label: 'Resolved in range' }]} rows={reports.staffWorkload} />
+            <AdminSection title={reportLabels[appliedFilters.reportType]} description={`Filtered results · ${formatAdminDate(appliedFilters.from)} — ${formatAdminDate(appliedFilters.to)}`}>
+              <AdminTable columns={view.columns} rows={view.rows} />
             </AdminSection>
           </div>
-        </>
+          {appliedFilters.reportType === 'service-trends' && (
+            <AdminSection title="Specialty activity over time" description={`Appointments grouped by ${appliedFilters.grouping} period and doctors' primary specialty.`}>
+              <AdminTable columns={[{ key: 'period', label: 'Period' }, { key: 'specialtyName', label: 'Specialty' }, { key: 'count', label: 'Appointments' }]} rows={reports.specialtyTrend} />
+            </AdminSection>
+          )}
+        </div>
       )}
     </>
   );

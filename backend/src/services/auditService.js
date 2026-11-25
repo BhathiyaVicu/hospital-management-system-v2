@@ -1,4 +1,5 @@
-import { query } from '../config/database.js';
+import { supabaseAdmin } from '../config/supabase.js';
+import { run } from '../repositories/supabaseHelpers.js';
 
 export async function recordActivity({
   actor = null,
@@ -9,21 +10,15 @@ export async function recordActivity({
   request = null,
   details = {},
 }) {
-  await query(
-    `INSERT INTO admin_activity_logs
-       (actor_user_id, actor_role, target_user_id, attempted_email, event_type,
-        success, ip_address, user_agent, details)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)`,
-    [
-      actor?.id || null,
-      actor?.role || null,
-      targetUserId,
-      attemptedEmail,
-      eventType,
-      success,
-      request?.ip || null,
-      request?.get('user-agent') || null,
-      JSON.stringify(details),
-    ],
-  );
+  await run(supabaseAdmin.from('admin_activity_logs').insert({
+    actor_user_id: actor?.id || null,
+    actor_role: actor?.role || null,
+    target_user_id: targetUserId,
+    attempted_email: attemptedEmail,
+    event_type: eventType,
+    success,
+    ip_address: request?.ip || null,
+    user_agent: request?.get('user-agent') || null,
+    details,
+  }));
 }

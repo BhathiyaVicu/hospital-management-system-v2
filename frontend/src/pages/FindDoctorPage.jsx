@@ -203,7 +203,7 @@ export default function FindDoctorPage() {
 
       <section className="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
         <div className="mb-5 flex items-center justify-between gap-4">
-          <h2 className="text-3xl font-semibold text-on-surface">Available doctors</h2>
+          <h4 className="text-3xl font-semibold text-on-surface">Available doctors</h4>
           <div className="rounded-full bg-surface-container px-3 py-1 text-xs font-medium uppercase tracking-[0.18em] text-on-surface-variant">
             {visibleDoctors.length} matches
           </div>
@@ -234,10 +234,6 @@ export default function FindDoctorPage() {
                       <div>
                         <div className="text-xl font-semibold text-on-surface">{doctor.name}</div>
                         <div className="text-sm text-primary">{doctor.title}</div>
-                      </div>
-                      <div className="flex items-center gap-1 rounded-full bg-surface-container px-2 py-1 text-sm font-medium text-on-surface">
-                        <span className="material-symbols-outlined text-base">star</span>
-                        {doctor.rating}
                       </div>
                     </div>
 

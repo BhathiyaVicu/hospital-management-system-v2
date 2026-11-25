@@ -42,9 +42,7 @@ export default function AppointmentConfirmationPage() {
   return (
     <div className="bg-surface pb-16">
       <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
-        <div className="mb-8 flex items-center justify-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-on-surface-variant sm:gap-6">
-          <span className="text-primary">1 · Choose a doctor</span><span aria-hidden="true">—</span><span className="text-primary">2 · Select a time</span><span aria-hidden="true">—</span><span className="text-primary">3 · Confirm</span>
-        </div>
+
         <section className="overflow-hidden rounded-3xl bg-surface-container-lowest shadow-md ring-1 ring-slate-200">
           <div className="bg-primary px-6 py-10 text-center text-on-primary sm:px-10">
             <span className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-white/15"><span className="material-symbols-outlined text-4xl">check_circle</span></span>

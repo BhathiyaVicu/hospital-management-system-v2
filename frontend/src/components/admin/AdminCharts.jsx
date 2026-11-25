@@ -1,6 +1,6 @@
 import { AdminEmptyState } from './AdminComponents';
 
-export function AdminTrendChart({ title, data = [] }) {
+export function AdminTrendChart({ title, data = [], grouping = 'daily' }) {
   const maximum = Math.max(1, ...data.map((point) => Number(point.count)));
   const hasData = data.some((point) => Number(point.count) > 0);
   const coordinates = data.map((point, index) => {
@@ -11,7 +11,7 @@ export function AdminTrendChart({ title, data = [] }) {
   return (
     <div>
       <h3 className="mb-1 font-semibold text-on-surface">{title}</h3>
-      <p className="mb-4 text-xs text-on-surface-variant">Daily totals · last 30 days</p>
+      <p className="mb-4 text-xs text-on-surface-variant">{grouping[0].toUpperCase() + grouping.slice(1)} totals · selected period</p>
       {!hasData ? <AdminEmptyState title="No activity in this period" /> : (
         <>
           <div className="h-52 rounded-xl bg-surface-container-low p-3">
@@ -21,7 +21,7 @@ export function AdminTrendChart({ title, data = [] }) {
             </svg>
           </div>
           <div className="mt-2 flex justify-between text-[10px] text-on-surface-variant">
-            <span>{data[0]?.date}</span><span>{data[Math.floor(data.length / 2)]?.date}</span><span>{data[data.length - 1]?.date}</span>
+            <span>{data[0]?.period || data[0]?.date}</span><span>{data[Math.floor(data.length / 2)]?.period || data[Math.floor(data.length / 2)]?.date}</span><span>{data[data.length - 1]?.period || data[data.length - 1]?.date}</span>
           </div>
         </>
       )}

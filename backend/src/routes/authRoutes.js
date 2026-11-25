@@ -7,8 +7,8 @@ import {
   emailSchema,
   changePasswordSchema,
   loginSchema,
+  refreshSessionSchema,
   registerSchema,
-  resetCodeSchema,
   resetPasswordSchema,
   verifyEmailSchema,
 } from '../validators/auth.js';
@@ -23,17 +23,16 @@ const authRateLimit = rateLimit({
 
 const router = Router();
 
-router.get('/csrf', controller.csrf);
 router.post('/register', authRateLimit, validate(registerSchema), controller.register);
 router.post('/login', authRateLimit, validate(loginSchema), controller.login);
+router.post('/refresh', authRateLimit, validate(refreshSessionSchema), controller.refresh);
 router.post('/logout', authenticate, controller.logout);
 router.get('/me', authenticate, controller.me);
 router.post('/change-password', authenticate, validate(changePasswordSchema), controller.changePassword);
+router.post('/complete-first-login', authenticate, controller.completeFirstLogin);
 router.post('/verify-email', authRateLimit, validate(verifyEmailSchema), controller.verifyEmail);
 router.post('/resend-verification', authRateLimit, validate(emailSchema), controller.resendVerification);
 router.post('/forgot-password', authRateLimit, validate(emailSchema), controller.forgotPassword);
-router.post('/verify-reset-code', authRateLimit, validate(resetCodeSchema), controller.verifyResetCode);
-router.post('/resend-reset-code', authRateLimit, validate(emailSchema), controller.resendResetCode);
 router.post('/reset-password', authRateLimit, validate(resetPasswordSchema), controller.resetPassword);
 
 export default router;

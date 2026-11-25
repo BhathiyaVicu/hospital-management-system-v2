@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { changePassword, getCurrentUser } from '../services/api';
+import { changePassword, setAccessToken } from '../services/api';
 
 function homeForRole(role) {
-  if (role === 'admin') return '/admin/dashboard';
   if (role === 'patient') return '/dashboard';
+  if (role === 'doctor') return '/doctor/dashboard';
+  if (role === 'admin') return '/admin/dashboard';
   if (role === 'staff') return '/staff/support';
+  if (role === 'receptionist') return '/receptionist/dashboard';
   return '/';
 }
 
@@ -16,6 +18,7 @@ export default function ChangePasswordPage() {
   const [error, setError] = useState('');
 
   const update = (event) => setValues((current) => ({ ...current, [event.target.name]: event.target.value }));
+
   const submit = async (event) => {
     event.preventDefault();
     if (values.newPassword !== values.confirmPassword) {
@@ -25,8 +28,12 @@ export default function ChangePasswordPage() {
     setLoading(true);
     setError('');
     try {
-      await changePassword({ currentPassword: values.currentPassword, newPassword: values.newPassword });
-      const { user } = await getCurrentUser();
+      const { token, refreshToken, user } = await changePassword({
+        currentPassword: values.currentPassword,
+        newPassword: values.newPassword,
+      });
+      setAccessToken(token, refreshToken);
+      window.dispatchEvent(new CustomEvent('auth:session-changed'));
       navigate(homeForRole(user.role), { replace: true });
     } catch (requestError) {
       setError(requestError.message || 'Unable to change your password.');

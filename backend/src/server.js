@@ -1,27 +1,26 @@
 import 'dotenv/config';
 import { getEnv } from './config/env.js';
-import { closePool, pool } from './config/database.js';
+import { supabaseAdmin } from './config/supabase.js';
 import { createApp } from './app.js';
 
 async function startServer() {
   const env = getEnv();
   try {
-    await pool.query('SELECT 1');
+    const { error } = await supabaseAdmin.from('users').select('id').limit(1);
+    if (error) throw error;
   } catch (error) {
-    console.error(`Database connection failed (${error.code || 'connection error'}). Verify DATABASE_URL, the PostgreSQL service, and database permissions.`);
+    console.error(`Supabase connection failed (${error.code || 'connection error'}). Verify SUPABASE_URL and the service role key.`);
     process.exitCode = 1;
-    await closePool();
     return;
   }
 
   const server = createApp({ env }).listen(env.PORT, () => {
-    console.log(`Hospital MS API listening on port ${env.PORT}; PostgreSQL is connected.`);
+    console.log(`Hospital MS API listening on port ${env.PORT}; Supabase is connected.`);
   });
 
   const shutdown = (signal) => {
-    console.log(`${signal} received; closing HTTP server and PostgreSQL pool.`);
+    console.log(`${signal} received; closing HTTP server.`);
     server.close(async () => {
-      await closePool();
       process.exit(0);
     });
   };

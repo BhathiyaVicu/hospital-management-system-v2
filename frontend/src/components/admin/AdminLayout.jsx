@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { getCurrentUser, logoutUser } from '../../services/api';
+import NotificationBell from '../layout/NotificationBell';
 
 const navigation = [
   { section: 'Overview', links: [['Dashboard', '/admin/dashboard', 'dashboard']] },
@@ -10,21 +11,29 @@ const navigation = [
   ] },
   { section: 'Providers & network', links: [
     ['Doctors', '/admin/doctors', 'stethoscope'],
-    ['Schedules', '/admin/schedules', 'calendar_clock'],
+    ['Doctor Schedules', '/admin/schedules/doctor', 'event_available'],
     ['Clinics', '/admin/clinics', 'apartment'],
-    ['Services & tariffs', '/admin/services', 'medical_services'],
+    ['Clinical specialties', '/admin/specialties', 'medical_services'],
   ] },
   { section: 'Team & security', links: [
     ['Staff', '/admin/staff', 'badge'],
     ['Receptionists', '/admin/receptionists', 'support_agent'],
+    ['Admin Management', '/admin/admins', 'admin_panel_settings'],
     ['Support & inquiries', '/admin/support', 'forum'],
     ['Reports & analytics', '/admin/reports', 'monitoring'],
     ['Activity logs', '/admin/activity-logs', 'history'],
   ] },
 ];
 
-function NavigationLinks({ onNavigate }) {
-  return navigation.map((group) => (
+function visibleNavigation(isSuperAdmin) {
+  return navigation.map((group) => ({
+    ...group,
+    links: group.links.filter(([, path]) => path !== '/admin/admins' || isSuperAdmin),
+  }));
+}
+
+function NavigationLinks({ onNavigate, isSuperAdmin }) {
+  return visibleNavigation(isSuperAdmin).map((group) => (
     <div key={group.section} className="mb-4">
       <p className="px-3 pb-2 pt-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">{group.section}</p>
       <div className="space-y-1">
@@ -32,7 +41,7 @@ function NavigationLinks({ onNavigate }) {
           <NavLink
             key={to}
             to={to}
-            end={to === '/admin/dashboard'}
+            end={to === '/admin/dashboard' || to === '/admin/schedules/doctor'}
             onClick={onNavigate}
             className={({ isActive }) => `flex min-h-11 items-center gap-3 rounded-lg px-3 text-sm font-medium transition ${
               isActive ? 'bg-primary text-on-primary shadow-sm' : 'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
@@ -79,7 +88,9 @@ export default function AdminLayout({ children }) {
   };
 
   const activeSection = navigation.flatMap((group) => group.links)
-    .find(([, to]) => pathname === to || (to !== '/admin/dashboard' && pathname.startsWith(to)));
+    .filter(([, to]) => to !== '/admin/admins' || user?.isSuperAdmin)
+    .find(([, to]) => pathname === to
+      || (to !== '/admin/dashboard' && to !== '/admin/schedules/doctor' && pathname.startsWith(to)));
 
   return (
     <div className="min-h-screen bg-surface text-on-surface">
@@ -90,7 +101,7 @@ export default function AdminLayout({ children }) {
             <span className="text-lg font-semibold tracking-tight">MediConnect</span>
           </span>
         </Link>
-        <nav aria-label="Administrator navigation" className="flex-1 px-4 py-3"><NavigationLinks /></nav>
+        <nav aria-label="Administrator navigation" className="flex-1 px-4 py-3"><NavigationLinks isSuperAdmin={user?.isSuperAdmin} /></nav>
         <div className="border-t border-slate-100 p-4">
           <div className="mb-3 flex items-center gap-3 rounded-xl bg-surface-container-low p-3">
             <span className="flex h-10 w-10 items-center justify-center rounded-full bg-primary text-sm font-semibold text-on-primary">{(user?.name || 'Admin').slice(0, 1).toUpperCase()}</span>
@@ -110,7 +121,7 @@ export default function AdminLayout({ children }) {
               <Link to="/admin/dashboard" onClick={() => setMobileOpen(false)} className="flex items-center gap-2 font-semibold"><span className="material-symbols-outlined text-primary">local_hospital</span>MediConnect HQ</Link>
               <button type="button" aria-label="Close admin navigation" onClick={() => setMobileOpen(false)} className="flex h-10 w-10 items-center justify-center rounded-lg hover:bg-surface-container"><span className="material-symbols-outlined">close</span></button>
             </div>
-            <nav aria-label="Administrator navigation" className="flex-1 px-4 py-3"><NavigationLinks onNavigate={() => setMobileOpen(false)} /></nav>
+            <nav aria-label="Administrator navigation" className="flex-1 px-4 py-3"><NavigationLinks isSuperAdmin={user?.isSuperAdmin} onNavigate={() => setMobileOpen(false)} /></nav>
             <button type="button" onClick={handleLogout} disabled={loggingOut} className="m-4 flex min-h-11 items-center gap-3 rounded-lg border-t border-slate-100 px-3 pt-3 text-sm font-semibold text-error">{loggingOut ? 'Signing out...' : 'Sign out'}</button>
           </aside>
         </div>
@@ -123,6 +134,7 @@ export default function AdminLayout({ children }) {
             <div className="min-w-0"><p className="truncate text-sm font-semibold">{activeSection?.[0] || 'Admin workspace'}</p><p className="hidden text-xs text-on-surface-variant sm:block">Administration · MediConnect</p></div>
           </div>
           <div className="flex items-center gap-2 sm:gap-4">
+            <NotificationBell />
             <span className="hidden max-w-48 truncate text-sm text-on-surface-variant sm:block">{user?.email}</span>
             <span className="flex h-9 w-9 items-center justify-center rounded-full bg-primary text-sm font-semibold text-on-primary">{(user?.name || 'A').slice(0, 1).toUpperCase()}</span>
           </div>

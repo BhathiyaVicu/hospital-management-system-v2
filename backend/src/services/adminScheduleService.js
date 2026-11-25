@@ -22,6 +22,22 @@ export async function listScheduleDoctors() {
   return scheduleRepository.listScheduleDoctors();
 }
 
+export async function getDoctorCalendar(filters) {
+  await validateDoctor(filters.doctorId);
+  return scheduleRepository.getDoctorCalendar(filters);
+}
+
+export async function saveDoctorDateSchedule(doctorId, date, payload, actor, request) {
+  await validateDoctor(doctorId);
+  const result = await scheduleRepository.saveDoctorDateSchedule({ ...payload, doctorId, date });
+  if (!result) throw httpError('The selected doctor profile was not found.', 404);
+  await recordActivity({
+    actor, request, eventType: 'admin.doctor_schedule_date.updated',
+    details: { doctorId, date, slotCount: result.slotCount, availableSlotCount: result.availableSlotCount },
+  });
+  return result;
+}
+
 export async function createWeekly(payload, actor, request) {
   await validateDoctor(payload.doctorId);
   const schedule = await scheduleRepository.createWeeklySchedule(payload);

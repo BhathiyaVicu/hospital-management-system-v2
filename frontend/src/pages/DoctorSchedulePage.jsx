@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import PortalHeading from '../components/common/PortalHeading';
 import WorkspaceLayout from '../components/workspace/WorkspaceLayout';
-import { getDoctorScheduleCalendar, saveDoctorDateSchedule } from '../services/api';
+import {
+  getAdminDoctorCalendar,
+  getDoctorScheduleCalendar,
+  saveAdminDoctorDateSchedule,
+  saveDoctorDateSchedule,
+} from '../services/api';
 
 const inputClass = 'mt-1.5 min-h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm';
 const weekDays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -83,7 +88,8 @@ function buildSlots(startTime, endTime, durationMinutes, existingDay, selectedDa
   });
 }
 
-export default function DoctorSchedulePage() {
+export function DoctorScheduleCalendar({ adminDoctorId, doctorName }) {
+  const isAdmin = adminDoctorId !== undefined;
   const [month, setMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
   const [browserToday] = useState(() => dateKey(new Date()));
   const [calendar, setCalendar] = useState(null);
@@ -101,8 +107,18 @@ export default function DoctorSchedulePage() {
 
   useEffect(() => {
     let active = true;
+    if (isAdmin && !adminDoctorId) {
+      setLoading(false);
+      setCalendar(null);
+      setSelectedDate('');
+      setEditor(emptyEditor(null));
+      return () => { active = false; };
+    }
     setLoading(true);
-    getDoctorScheduleCalendar({ from: monthStart, to: monthEnd })
+    const request = isAdmin
+      ? getAdminDoctorCalendar(adminDoctorId, { from: monthStart, to: monthEnd })
+      : getDoctorScheduleCalendar({ from: monthStart, to: monthEnd });
+    request
       .then(({ data }) => {
         if (!active) return;
         setCalendar(data);
@@ -116,7 +132,7 @@ export default function DoctorSchedulePage() {
       })
       .catch((requestError) => {
         if (!active) return;
-        setError(requestError.message || 'Unable to load your availability calendar.');
+        setError(requestError.message || 'Unable to load the availability calendar.');
         setCalendar(null);
         setSelectedDate('');
         setEditor(emptyEditor(null));
@@ -127,7 +143,7 @@ export default function DoctorSchedulePage() {
     return () => {
       active = false;
     };
-  }, [monthStart, monthEnd, refreshVersion]);
+  }, [adminDoctorId, isAdmin, monthStart, monthEnd, refreshVersion]);
 
   const daysByDate = useMemo(
     () => new Map((calendar?.days || []).map((day) => [day.date, day])),
@@ -243,7 +259,9 @@ export default function DoctorSchedulePage() {
       const timeout = new Promise((_, reject) =>
         setTimeout(() => reject(new Error('Save request timed out. Check the backend.')), 15000),
       );
-      const request = saveDoctorDateSchedule(selectedDate, payload);
+      const request = isAdmin
+        ? saveAdminDoctorDateSchedule(adminDoctorId, selectedDate, payload)
+        : saveDoctorDateSchedule(selectedDate, payload);
       await Promise.race([request, timeout]);
       setNotice('Availability saved. Patient booking has been updated.');
       preferredDate.current = selectedDate;
@@ -265,13 +283,15 @@ export default function DoctorSchedulePage() {
     ['Next available date', calendar?.summary.nextAvailableDate ? formatDate(calendar.summary.nextAvailableDate, { day: 'numeric', month: 'short' }) : 'None', 'schedule'],
   ];
 
-  return (
-    <WorkspaceLayout role="doctor">
-      <PortalHeading
-        eyebrow="Doctor workspace · availability"
-        title="My schedule"
-        description="Select a date to create or update appointment slots. Existing bookings are protected automatically."
-      />
+  const content = (
+    <>
+      {!isAdmin && (
+        <PortalHeading
+          eyebrow="Doctor workspace · availability"
+          title="My schedule"
+          description="Select a date to create or update appointment slots. Existing bookings are protected automatically."
+        />
+      )}
 
       {error && <p role="alert" className="mb-4 rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p>}
       {notice && <p role="status" className="mb-4 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800">{notice}</p>}
@@ -311,7 +331,7 @@ export default function DoctorSchedulePage() {
           </div>
 
           {loading ? (
-            <p role="status" className="py-16 text-center text-sm text-on-surface-variant">Loading your calendar...</p>
+            <p role="status" className="py-16 text-center text-sm text-on-surface-variant">Loading {isAdmin ? `${doctorName || 'doctor'}'s` : 'your'} calendar...</p>
           ) : calendar ? (
             <div className="mt-2 grid grid-cols-7 gap-1 sm:gap-2">
               {calendarCells.map((dateNumber, index) => {
@@ -444,6 +464,11 @@ export default function DoctorSchedulePage() {
           )}
         </section>
       </div>
-    </WorkspaceLayout>
+    </>
   );
+  return isAdmin ? content : <WorkspaceLayout role="doctor">{content}</WorkspaceLayout>;
+}
+
+export default function DoctorSchedulePage() {
+  return <DoctorScheduleCalendar />;
 }

@@ -1,311 +1,211 @@
-import { query, withTransaction } from '../config/database.js';
-import { getAvailabilitySlots } from './doctorsRepository.js';
-import { createAppointment as bookAppointment } from './appointmentsRepository.js';
+import { supabaseAdmin } from '../config/supabase.js';
+import { run, rows, paginate, byId, matches } from './supabaseHelpers.js';
+import { getAvailabilitySlots, localDate } from './doctorsRepository.js';
+import { createAppointment as bookAppointment, rescheduleClinicAppointment, cancelClinicAppointment } from './appointmentsRepository.js';
 
 export async function listAssignedClinics(userId) {
-  const result = await query(
-    `SELECT clinic.id, clinic.name, clinic.city, clinic.address, clinic.phone
-     FROM receptionist_clinics assignment
-     JOIN clinics clinic ON clinic.id = assignment.clinic_id
-     WHERE assignment.receptionist_user_id = $1 AND clinic.is_active = TRUE
-     ORDER BY clinic.name`,
-    [userId],
-  );
-  return result.rows;
+  const [links, clinics] = await Promise.all([rows('receptionist_clinics'), rows('clinics')]);
+  const clinicMap = byId(clinics);
+  return links.filter((link) => link.receptionist_user_id === userId)
+    .map((link) => clinicMap.get(link.clinic_id))
+    .filter((clinic) => clinic?.is_active)
+    .map(({ id, name, city, address, phone }) => ({ id, name, city, address, phone }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export async function getProfile(userId) {
-  const result = await query(
-    `SELECT name, email, profile_phone AS phone FROM users
-     WHERE id = $1 AND role = 'receptionist'`,
-    [userId],
-  );
-  return result.rows[0] || null;
+  const { data } = await run(supabaseAdmin.from('users').select('name,email,profile_phone')
+    .eq('id', userId).eq('role', 'receptionist').maybeSingle());
+  return data ? { name: data.name, email: data.email, phone: data.profile_phone } : null;
 }
 
 export async function updateProfile(userId, { name, phone }) {
-  const result = await query(
-    `UPDATE users SET name = $2, profile_phone = $3
-     WHERE id = $1 AND role = 'receptionist'
-     RETURNING name, email, profile_phone AS phone`,
-    [userId, name, phone || null],
-  );
-  return result.rows[0] || null;
+  const { data } = await run(supabaseAdmin.from('users').update({ name, profile_phone: phone || null })
+    .eq('id', userId).eq('role', 'receptionist').select('name,email,profile_phone').maybeSingle());
+  return data ? { name: data.name, email: data.email, phone: data.profile_phone } : null;
 }
 
 export async function getDashboard(clinicIds) {
-  const result = await query(
-    `SELECT
-       count(*) FILTER (WHERE (appointment.scheduled_start AT TIME ZONE doctor.time_zone)::date
-         = (now() AT TIME ZONE doctor.time_zone)::date
-         AND appointment.status = 'confirmed')::int AS "todayAppointments",
-       count(*) FILTER (WHERE appointment.status = 'confirmed'
-         AND appointment.scheduled_start > now())::int AS "upcomingAppointments",
-       count(*) FILTER (WHERE appointment.workflow_status IN ('arrived', 'checked_in', 'waiting'))::int
-         AS "arrivalsToProcess",
-       count(*) FILTER (WHERE appointment.is_walk_in = TRUE
-         AND appointment.created_at >= now() - interval '7 days')::int AS "recentWalkIns"
-     FROM appointments appointment
-     JOIN doctors doctor ON doctor.id = appointment.doctor_id
-     WHERE doctor.clinic_id = ANY($1::uuid[])`,
-    [clinicIds],
-  );
-  return result.rows[0];
+  const [appointments, doctors] = await Promise.all([rows('appointments'), rows('doctors')]);
+  const doctorMap = byId(doctors);
+  const items = appointments.filter((item) => clinicIds.includes(doctorMap.get(item.doctor_id)?.clinic_id));
+  return {
+    todayAppointments: items.filter((item) => item.status === 'confirmed'
+      && localDate(new Date(item.scheduled_start), doctorMap.get(item.doctor_id)?.time_zone || 'UTC')
+        === localDate(new Date(), doctorMap.get(item.doctor_id)?.time_zone || 'UTC')).length,
+    upcomingAppointments: items.filter((item) => item.status === 'confirmed' && new Date(item.scheduled_start) > new Date()).length,
+    arrivalsToProcess: items.filter((item) => ['arrived', 'checked_in', 'waiting'].includes(item.workflow_status)).length,
+    recentWalkIns: items.filter((item) => item.is_walk_in
+      && new Date(item.created_at) >= new Date(Date.now() - 7 * 86400000)).length,
+  };
 }
 
 export async function searchPatients(clinicIds, search, { limit, offset }) {
-  const terms = `%${search.replace(/[\\%_]/g, '\\$&')}%`;
-  const values = [clinicIds, terms];
-  const base = `FROM patients patient
-     JOIN users patient_user ON patient_user.id = patient.user_id
-     JOIN patient_clinics patient_clinic ON patient_clinic.patient_id = patient.id
-     WHERE patient_clinic.clinic_id = ANY($1::uuid[])
-       AND patient_user.is_active = TRUE
-       AND (patient_user.name ILIKE $2 OR patient_user.email ILIKE $2 OR COALESCE(patient.phone, '') ILIKE $2)`;
-  const count = await query(`SELECT count(DISTINCT patient.id)::int AS total ${base}`, values);
-  const result = await query(
-    `SELECT DISTINCT patient.id, patient_user.name, patient_user.email,
-       patient.phone, patient.updated_at AS "updatedAt"
-     ${base}
-     ORDER BY patient_user.name
-     LIMIT $3 OFFSET $4`,
-    [...values, limit, offset],
-  );
-  return { patients: result.rows, total: count.rows[0].total };
+  const [patients, users, patientClinics] = await Promise.all([rows('patients'), rows('users'), rows('patient_clinics')]);
+  const userMap = byId(users);
+  const ids = new Set(patientClinics.filter((link) => clinicIds.includes(link.clinic_id)).map((link) => link.patient_id));
+  const found = patients.flatMap((patient) => {
+    const user = userMap.get(patient.user_id);
+    if (!ids.has(patient.id) || !user?.is_active
+      || (search && !matches(user.name, search) && !matches(user.email, search) && !matches(patient.phone, search))) return [];
+    return [{ id: patient.id, name: user.name, email: user.email, phone: patient.phone, updatedAt: patient.updated_at }];
+  }).sort((a, b) => a.name.localeCompare(b.name));
+  return { patients: paginate(found, limit, offset), total: found.length };
 }
 
 export async function linkPatientByEmail(email, clinicId, actorUserId) {
-  return withTransaction(async (client) => {
-    const result = await client.query(
-      `SELECT patient.id, patient_user.id AS "userId", patient_user.name,
-              patient_user.email, patient.phone
-       FROM users patient_user
-       JOIN patients patient ON patient.user_id = patient_user.id
-       WHERE patient_user.email = $1 AND patient_user.role = 'patient'
-         AND patient_user.is_active = TRUE
-       FOR UPDATE OF patient_user`,
-      [email],
-    );
-    if (!result.rowCount) return null;
-    await client.query(
-      `INSERT INTO patient_clinics (patient_id, clinic_id, created_by_user_id)
-       VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
-      [result.rows[0].id, clinicId, actorUserId],
-    );
-    return result.rows[0];
-  });
+  const { data: user } = await run(supabaseAdmin.from('users').select('id,name,email,role,is_active')
+    .eq('email', email).eq('role', 'patient').maybeSingle());
+  if (!user?.is_active) return null;
+  const { data: patient } = await run(supabaseAdmin.from('patients').select('id,phone').eq('user_id', user.id).maybeSingle());
+  if (!patient) return null;
+  const { data: link } = await run(supabaseAdmin.from('patient_clinics').select('patient_id')
+    .eq('patient_id', patient.id).eq('clinic_id', clinicId).maybeSingle());
+  if (!link) await run(supabaseAdmin.from('patient_clinics').insert({
+    patient_id: patient.id, clinic_id: clinicId, created_by_user_id: actorUserId,
+  }));
+  return { id: patient.id, userId: user.id, name: user.name, email: user.email, phone: patient.phone };
 }
 
-export async function registerPatient({ name, email, passwordHash, phone, verificationTokenHash, verificationExpiresAt, clinicId, actorUserId }) {
-  return withTransaction(async (client) => {
-    const user = await client.query(
-      `INSERT INTO users (name, email, password_hash, role)
-       VALUES ($1, $2, $3, 'patient')
-       RETURNING id, name, email, role`,
-      [name, email, passwordHash],
-    );
-    const patient = await client.query(
-      'INSERT INTO patients (user_id, phone) VALUES ($1, $2) RETURNING id',
-      [user.rows[0].id, phone || null],
-    );
-    await client.query(
-      `INSERT INTO patient_clinics (patient_id, clinic_id, created_by_user_id)
-       VALUES ($1, $2, $3)`,
-      [patient.rows[0].id, clinicId, actorUserId],
-    );
-    await client.query(
-      `INSERT INTO email_verification_tokens (user_id, token_hash, expires_at)
-       VALUES ($1, $2, $3)`,
-      [user.rows[0].id, verificationTokenHash, verificationExpiresAt],
-    );
-    return { ...user.rows[0], patient_id: patient.rows[0].id };
+export async function registerPatient({ name, email, password, phone, clinicId, actorUserId }) {
+  const { data, error } = await supabaseAdmin.auth.signUp({
+    email, password, options: { data: { name, role: 'patient' } },
   });
+  if (error) {
+    const failure = new Error(error.message);
+    failure.status = 400;
+    throw failure;
+  }
+  if (!data.user) throw new Error('Supabase Auth did not return the registered user.');
+  const { data: user } = await run(supabaseAdmin.from('users').select('id,name,email').eq('id', data.user.id).maybeSingle());
+  const { data: patient } = await run(supabaseAdmin.from('patients').insert({
+    user_id: data.user.id, phone: phone || null,
+  }).select('id').single());
+  if (clinicId) await run(supabaseAdmin.from('patient_clinics').insert({
+    patient_id: patient.id, clinic_id: clinicId, created_by_user_id: actorUserId,
+  }));
+  return { ...user, patient_id: patient.id };
 }
 
 export async function removeUnverifiedPatient(userId) {
-  await withTransaction(async (client) => {
-    await client.query('DELETE FROM patients WHERE user_id = $1', [userId]);
-    await client.query(
-      `DELETE FROM users
-       WHERE id = $1 AND role = 'patient' AND email_verified_at IS NULL`,
-      [userId],
-    );
-  });
+  await run(supabaseAdmin.from('users').delete().eq('id', userId).eq('role', 'patient'));
 }
 
 export async function updatePatientContact(patientId, clinicIds, { name, phone }) {
-  return withTransaction(async (client) => {
-    const patient = await client.query(
-      `SELECT patient.id, patient.user_id
-       FROM patients patient
-       WHERE patient.id = $1 AND EXISTS (
-         SELECT 1 FROM patient_clinics link
-         WHERE link.patient_id = patient.id AND link.clinic_id = ANY($2::uuid[])
-       ) AND EXISTS (SELECT 1 FROM users active_user WHERE active_user.id = patient.user_id AND active_user.is_active = TRUE)
-       FOR UPDATE`,
-      [patientId, clinicIds],
-    );
-    if (!patient.rowCount) return null;
-    await client.query('UPDATE users SET name = $1 WHERE id = $2', [name, patient.rows[0].user_id]);
-    const updated = await client.query(
-      `UPDATE patients SET phone = $1
-       WHERE id = $2 RETURNING id, phone, updated_at AS "updatedAt"`,
-      [phone || null, patientId],
-    );
-    return { ...updated.rows[0], name };
+  const [patientResult, links] = await Promise.all([
+    run(supabaseAdmin.from('patients').select('id,user_id').eq('id', patientId).maybeSingle()),
+    rows('patient_clinics'),
+  ]);
+  const patient = patientResult.data;
+  if (!patient || !links.some((link) => link.patient_id === patientId && clinicIds.includes(link.clinic_id))) return null;
+  const { data: user } = await run(supabaseAdmin.from('users').select('is_active').eq('id', patient.user_id).maybeSingle());
+  if (!user?.is_active) return null;
+  await run(supabaseAdmin.from('users').update({ name }).eq('id', patient.user_id));
+  const { data } = await run(supabaseAdmin.from('patients').update({ phone: phone || null })
+    .eq('id', patientId).select('id,phone,updated_at').single());
+  return { id: data.id, phone: data.phone, updatedAt: data.updated_at, name };
+}
+
+async function appointmentRows(clinicIds) {
+  const [appointments, doctors, patients, users, clinics] = await Promise.all([
+    rows('appointments'), rows('doctors'), rows('patients'), rows('users'), rows('clinics'),
+  ]);
+  const doctorMap = byId(doctors); const patientMap = byId(patients);
+  const userMap = byId(users); const clinicMap = byId(clinics);
+  return appointments.flatMap((appointment) => {
+    const doctor = doctorMap.get(appointment.doctor_id);
+    if (!clinicIds.includes(doctor?.clinic_id)) return [];
+    const patient = patientMap.get(appointment.patient_id);
+    const patientUser = userMap.get(patient?.user_id);
+    const doctorUser = userMap.get(doctor?.user_id);
+    const clinic = clinicMap.get(doctor?.clinic_id);
+    return [{
+      id: appointment.id, scheduledStart: appointment.scheduled_start, scheduledEnd: appointment.scheduled_end,
+      status: appointment.status, workflowStatus: appointment.workflow_status, reason: appointment.reason,
+      isWalkIn: appointment.is_walk_in, doctorId: doctor.id, doctorName: doctorUser?.name,
+      timeZone: doctor.time_zone, patientId: patient?.id, patientName: patientUser?.name,
+      patientEmail: patientUser?.email, patientPhone: patient?.phone, clinicId: clinic?.id, clinicName: clinic?.name,
+    }];
   });
 }
 
 export async function listAppointments(clinicIds, { from, to, status, clinicId, limit, offset }) {
-  const filters = ['doctor.clinic_id = ANY($1::uuid[])'];
-  const values = [clinicIds];
-  if (clinicId) {
-    values.push(clinicId);
-    filters.push(`doctor.clinic_id = $${values.length}`);
-  }
-  if (from) {
-    values.push(from);
-    filters.push(`(appointment.scheduled_start AT TIME ZONE doctor.time_zone)::date >= $${values.length}::date`);
-  }
-  if (to) {
-    values.push(to);
-    filters.push(`(appointment.scheduled_start AT TIME ZONE doctor.time_zone)::date <= $${values.length}::date`);
-  }
-  if (status) {
-    values.push(status);
-    filters.push(`appointment.workflow_status = $${values.length}`);
-  }
-  const where = filters.join(' AND ');
-  const base = `FROM appointments appointment
-     JOIN doctors doctor ON doctor.id = appointment.doctor_id
-     JOIN users doctor_user ON doctor_user.id = doctor.user_id
-     JOIN patients patient ON patient.id = appointment.patient_id
-     JOIN users patient_user ON patient_user.id = patient.user_id
-     JOIN clinics clinic ON clinic.id = doctor.clinic_id
-     WHERE ${where}`;
-  const count = await query(`SELECT count(*)::int AS total ${base}`, values);
-  const pageValues = [...values, limit, offset];
-  const result = await query(
-    `SELECT appointment.id, appointment.scheduled_start AS "scheduledStart",
-       appointment.scheduled_end AS "scheduledEnd", appointment.status,
-       appointment.workflow_status AS "workflowStatus", appointment.reason,
-       appointment.is_walk_in AS "isWalkIn",
-       doctor.id AS "doctorId", doctor_user.name AS "doctorName", doctor.time_zone AS "timeZone",
-       patient.id AS "patientId", patient_user.name AS "patientName", patient_user.email AS "patientEmail",
-       patient.phone AS "patientPhone",
-       clinic.id AS "clinicId", clinic.name AS "clinicName"
-     ${base}
-     ORDER BY appointment.scheduled_start DESC
-     LIMIT $${pageValues.length - 1} OFFSET $${pageValues.length}`,
-    pageValues,
-  );
-  return { appointments: result.rows, total: count.rows[0].total };
+  const found = (await appointmentRows(clinicIds)).filter((item) => (
+    (!clinicId || item.clinicId === clinicId)
+    && (!from || localDate(new Date(item.scheduledStart), item.timeZone || 'UTC') >= from)
+    && (!to || localDate(new Date(item.scheduledStart), item.timeZone || 'UTC') <= to)
+    && (!status || item.workflowStatus === status)
+  )).sort((a, b) => b.scheduledStart.localeCompare(a.scheduledStart));
+  return { appointments: paginate(found, limit, offset), total: found.length };
 }
 
 export async function getAppointment(clinicIds, appointmentId) {
-  const result = await query(
-    `SELECT appointment.id, appointment.scheduled_start AS "scheduledStart",
-       appointment.scheduled_end AS "scheduledEnd", appointment.status,
-       appointment.workflow_status AS "workflowStatus", appointment.reason,
-       appointment.is_walk_in AS "isWalkIn", appointment.walk_in_reason AS "walkInReason",
-       doctor.id AS "doctorId", doctor_user.name AS "doctorName", doctor.time_zone AS "timeZone",
-       patient.id AS "patientId", patient_user.name AS "patientName", patient_user.email AS "patientEmail",
-       patient.phone AS "patientPhone",
-       clinic.id AS "clinicId", clinic.name AS "clinicName",
-       (SELECT COALESCE(json_agg(jsonb_build_object(
-         'eventType', history.event_type, 'scheduledStart', history.scheduled_start,
-         'scheduledEnd', history.scheduled_end, 'status', history.status,
-         'workflowStatus', history.workflow_status, 'changedAt', history.changed_at,
-         'actorName', actor.name
-       ) ORDER BY history.changed_at DESC), '[]'::json)
-        FROM appointment_history history LEFT JOIN users actor ON actor.id = history.actor_user_id
-        WHERE history.appointment_id = appointment.id) AS history,
-       (SELECT COALESCE(json_agg(jsonb_build_object(
-         'previousStatus', workflow_history.previous_status, 'newStatus', workflow_history.new_status,
-         'changedAt', workflow_history.changed_at, 'actorName', workflow_actor.name
-       ) ORDER BY workflow_history.changed_at DESC), '[]'::json)
-        FROM appointment_workflow_history workflow_history
-        LEFT JOIN users workflow_actor ON workflow_actor.id = workflow_history.actor_user_id
-        WHERE workflow_history.appointment_id = appointment.id) AS "workflowHistory"
-     FROM appointments appointment
-     JOIN doctors doctor ON doctor.id = appointment.doctor_id
-     JOIN users doctor_user ON doctor_user.id = doctor.user_id
-     JOIN patients patient ON patient.id = appointment.patient_id
-     JOIN users patient_user ON patient_user.id = patient.user_id
-     JOIN clinics clinic ON clinic.id = doctor.clinic_id
-     WHERE doctor.clinic_id = ANY($1::uuid[]) AND appointment.id = $2`,
-    [clinicIds, appointmentId],
-  );
-  return result.rows[0] || null;
+  const item = (await appointmentRows(clinicIds)).find((appointment) => appointment.id === appointmentId);
+  if (!item) return null;
+  const [history, workflowHistory, users] = await Promise.all([
+    run(supabaseAdmin.from('appointment_history').select('*').eq('appointment_id', appointmentId).order('changed_at', { ascending: false })),
+    run(supabaseAdmin.from('appointment_workflow_history').select('*').eq('appointment_id', appointmentId).order('changed_at', { ascending: false })),
+    rows('users'),
+  ]);
+  const userMap = byId(users);
+  return {
+    ...item,
+    history: (history.data || []).map((entry) => ({
+      eventType: entry.event_type, scheduledStart: entry.scheduled_start, scheduledEnd: entry.scheduled_end,
+      status: entry.status, workflowStatus: entry.workflow_status, changedAt: entry.changed_at,
+      actorName: userMap.get(entry.actor_user_id)?.name,
+    })),
+    workflowHistory: (workflowHistory.data || []).map((entry) => ({
+      previousStatus: entry.previous_status, newStatus: entry.new_status,
+      changedAt: entry.changed_at, actorName: userMap.get(entry.actor_user_id)?.name,
+    })),
+  };
 }
 
 export async function listDoctors(clinicIds, clinicId) {
-  const result = await query(
-    `SELECT doctor.id, account.name, doctor.professional_title AS title,
-       doctor.consultation_fee AS "consultationFee", doctor.currency, doctor.time_zone AS "timeZone"
-     FROM doctors doctor
-     JOIN users account ON account.id = doctor.user_id
-     JOIN clinics clinic ON clinic.id = doctor.clinic_id AND clinic.is_active = TRUE
-     WHERE doctor.clinic_id = ANY($1::uuid[]) AND doctor.clinic_id = $2
-       AND doctor.approval_status = 'approved' AND doctor.is_accepting_appointments = TRUE
-       AND account.is_active = TRUE
-     ORDER BY account.name`,
-    [clinicIds, clinicId],
-  );
-  return result.rows;
+  const [doctors, users, clinics] = await Promise.all([rows('doctors'), rows('users'), rows('clinics')]);
+  const userMap = byId(users); const clinicMap = byId(clinics);
+  return doctors.filter((doctor) => clinicIds.includes(doctor.clinic_id) && doctor.clinic_id === clinicId
+    && doctor.approval_status === 'approved' && doctor.is_accepting_appointments
+    && userMap.get(doctor.user_id)?.is_active && clinicMap.get(doctor.clinic_id)?.is_active)
+    .map((doctor) => ({
+      id: doctor.id, name: userMap.get(doctor.user_id).name, title: doctor.professional_title,
+      consultationFee: doctor.consultation_fee, currency: 'LKR', timeZone: doctor.time_zone,
+    })).sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export async function getDoctorSlots(clinicIds, clinicId, doctorId) {
-  const doctor = await query(
-    `SELECT 1 FROM doctors doctor
-     JOIN clinics clinic ON clinic.id = doctor.clinic_id AND clinic.is_active = TRUE
-     WHERE doctor.id = $1 AND doctor.clinic_id = $2
-       AND doctor.clinic_id = ANY($3::uuid[]) AND doctor.approval_status = 'approved'
-       AND doctor.is_accepting_appointments = TRUE`,
-    [doctorId, clinicId, clinicIds],
-  );
-  if (!doctor.rowCount) return null;
+  const [doctorResult, clinicResult] = await Promise.all([
+    run(supabaseAdmin.from('doctors').select('*').eq('id', doctorId).maybeSingle()),
+    run(supabaseAdmin.from('clinics').select('is_active').eq('id', clinicId).maybeSingle()),
+  ]);
+  const doctor = doctorResult.data;
+  if (!doctor || doctor.clinic_id !== clinicId || !clinicIds.includes(clinicId)
+    || !clinicResult.data?.is_active || !doctor.is_accepting_appointments || doctor.approval_status !== 'approved') return null;
   return getAvailabilitySlots(doctorId);
 }
 
+const workflowTransitions = {
+  scheduled: new Set(['arrived', 'no_show']), arrived: new Set(['checked_in', 'no_show']),
+  checked_in: new Set(['waiting', 'no_show']), waiting: new Set(['no_show']),
+};
+
 export async function updateWorkflow(clinicIds, appointmentId, nextStatus, actorUserId) {
-  const transitions = {
-    scheduled: new Set(['arrived', 'no_show']),
-    arrived: new Set(['checked_in', 'no_show']),
-    checked_in: new Set(['waiting', 'no_show']),
-    waiting: new Set(['no_show']),
-  };
-  return withTransaction(async (client) => {
-    const current = await client.query(
-      `SELECT appointment.id, appointment.workflow_status AS "workflowStatus"
-       FROM appointments appointment
-       JOIN doctors doctor ON doctor.id = appointment.doctor_id
-       WHERE appointment.id = $1 AND appointment.status = 'confirmed'
-         AND doctor.clinic_id = ANY($2::uuid[])
-       FOR UPDATE OF appointment`,
-      [appointmentId, clinicIds],
-    );
-    if (!current.rowCount) return { notFound: true };
-    const previousStatus = current.rows[0].workflowStatus;
-    if (!transitions[previousStatus]?.has(nextStatus)) {
-      return { invalidTransition: true, currentStatus: previousStatus };
-    }
-    const updated = await client.query(
-      `UPDATE appointments
-       SET workflow_status = $1, workflow_updated_at = now(),
-           workflow_updated_by_user_id = $2, updated_by_user_id = $2
-       WHERE id = $3
-       RETURNING id, status, workflow_status AS "workflowStatus"`,
-      [nextStatus, actorUserId, appointmentId],
-    );
-    await client.query(
-      `INSERT INTO appointment_workflow_history
-        (appointment_id, previous_status, new_status, actor_user_id)
-       VALUES ($1, $2, $3, $4)`,
-      [appointmentId, previousStatus, nextStatus, actorUserId],
-    );
-    return { appointment: updated.rows[0] };
-  });
+  const { data: appointment } = await run(supabaseAdmin.from('appointments').select('*').eq('id', appointmentId).maybeSingle());
+  const { data: doctor } = appointment
+    ? await run(supabaseAdmin.from('doctors').select('clinic_id').eq('id', appointment.doctor_id).maybeSingle())
+    : { data: null };
+  if (!appointment || appointment.status !== 'confirmed' || !clinicIds.includes(doctor?.clinic_id)) return { notFound: true };
+  const previous = appointment.workflow_status;
+  if (!workflowTransitions[previous]?.has(nextStatus)) return { invalidTransition: true, currentStatus: previous };
+  const { data } = await run(supabaseAdmin.from('appointments').update({
+    workflow_status: nextStatus, workflow_updated_at: new Date().toISOString(),
+    workflow_updated_by_user_id: actorUserId, updated_by_user_id: actorUserId,
+  }).eq('id', appointmentId).select('id,status,workflow_status').single());
+  await run(supabaseAdmin.from('appointment_workflow_history').insert({
+    appointment_id: appointmentId, previous_status: previous, new_status: nextStatus, actor_user_id: actorUserId,
+  }));
+  return { appointment: { id: data.id, status: data.status, workflowStatus: data.workflow_status } };
 }
 
 export async function createAppointment({ patientId, doctorId, clinicId, scheduledStart, reason, createdByUserId, isWalkIn, walkInReason, clinicIds }) {
@@ -314,3 +214,5 @@ export async function createAppointment({ patientId, doctorId, clinicId, schedul
     isWalkIn, walkInReason, allowedClinicIds: clinicIds,
   });
 }
+
+export { rescheduleClinicAppointment, cancelClinicAppointment };

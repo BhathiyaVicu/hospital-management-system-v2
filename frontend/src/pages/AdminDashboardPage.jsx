@@ -9,7 +9,7 @@ const cards = [
   ['Total patients', 'patients', 'groups', 'blue'],
   ['Doctors', 'doctors', 'stethoscope', 'primary'],
   ['Clinics', 'clinics', 'apartment', 'blue'],
-  ['Healthcare services', 'services', 'medical_services', 'primary'],
+  ['Clinical specialties', 'specialties', 'medical_services', 'primary'],
   ['Support staff', 'staff', 'badge', 'amber'],
   ['Receptionists', 'receptionists', 'support_agent', 'amber'],
   ['Appointments', 'appointments', 'calendar_month', 'primary'],

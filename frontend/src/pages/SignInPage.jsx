@@ -22,7 +22,7 @@ export default function SignInPage() {
     try {
       const { user } = await loginUser(form);
       if (user.mustChangePassword) {
-        navigate('/change-password', { replace: true });
+        navigate('/first-login', { replace: true });
       } else {
         const from = location.state?.from;
         const requestedPath = from?.pathname || '';

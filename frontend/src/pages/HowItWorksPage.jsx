@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 const steps = [
   {
     title: 'Find a Doctor',
-    description: 'Search by specialty, clinic, or location. Compare verified schedules, consultation fees, and patient ratings to find the right specialist for your needs.',
+    description: 'Search by specialty, clinic, or location. Compare verified schedules and consultation fees to find the right specialist for your needs.',
     icon: 'search',
     color: 'bg-secondary-container text-on-secondary-container'
   },

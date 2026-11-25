@@ -7,8 +7,7 @@ export function corsOptions(env = getEnv()) {
       if (!origin || origin === FRONTEND_URL) return callback(null, true);
       return callback(new Error('Origin is not allowed by CORS.'));
     },
-    credentials: true,
     methods: ['GET', 'POST', 'PATCH',  'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'X-CSRF-Token'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
   };
 }

@@ -1,7 +1,10 @@
 import { z } from 'zod';
 
 const email = z.string().trim().toLowerCase().email().max(254);
-const password = z.string().min(12).max(128);
+const password = z.string().min(12).max(128)
+  .regex(/[A-Z]/, 'Password must include an uppercase letter.')
+  .regex(/[0-9]/, 'Password must include a number.')
+  .regex(/[!@#$%^&*]/, 'Password must include a special character.');
 
 export const registerSchema = z.object({
   body: z.object({
@@ -19,24 +22,24 @@ export const loginSchema = z.object({
   }),
 });
 
+export const refreshSessionSchema = z.object({
+  body: z.object({ refreshToken: z.string().min(20).max(2048) }).strict(),
+});
+
 export const emailSchema = z.object({ body: z.object({ email }) });
 
 export const verifyEmailSchema = z.object({
   body: z.object({
-    email,
-    token: z.string().min(32).max(256),
-  }),
-});
-
-export const resetCodeSchema = z.object({
-  body: z.object({
-    email,
-    code: z.string().regex(/^\d{6}$/),
+    email: email.optional(),
+    token: z.string().min(32).max(256).optional(),
+    accessToken: z.string().min(32).optional(),
+  }).refine((value) => value.accessToken || value.token, {
+    message: 'A Supabase access token or email verification token is required.',
   }),
 });
 
 export const resetPasswordSchema = z.object({
-  body: z.object({ newPassword: password }),
+  body: z.object({ newPassword: password, accessToken: z.string().min(32).optional() }),
 });
 
 export const changePasswordSchema = z.object({

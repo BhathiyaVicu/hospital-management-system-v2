@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { getCurrentUser, logoutUser } from '../../services/api';
+import NotificationBell from './NotificationBell';
 
 const publicNavigationItems = [
   { label: 'Find a Doctor', to: '/doctors' },
@@ -18,6 +19,25 @@ const patientNavigationItems = [
 
 const staffNavigationItems = [
   { label: 'Support Queue', to: '/staff/support' },
+];
+
+const doctorNavigationItems = [
+  { label: 'Dashboard', to: '/doctor/dashboard', end: true },
+  { label: 'Appointments', to: '/doctor/appointments' },
+  { label: 'My schedule', to: '/doctor/schedules' },
+];
+
+const receptionistNavigationItems = [
+  { label: 'Dashboard', to: '/receptionist/dashboard', end: true },
+  { label: 'Appointments', to: '/receptionist/appointments' },
+  { label: 'Patients', to: '/receptionist/patients' },
+];
+
+const adminNavigationItems = [
+  { label: 'Dashboard', to: '/admin/dashboard', end: true },
+  { label: 'Appointments', to: '/admin/appointments' },
+  { label: 'Reports', to: '/admin/reports' },
+  { label: 'Support', to: '/admin/support' },
 ];
 
 const navLinkClass = ({ isActive }) => `rounded-lg px-4 py-2 text-base font-medium transition ${
@@ -60,25 +80,39 @@ export default function NavigationBar() {
       ? patientNavigationItems
       : role === 'staff'
         ? staffNavigationItems
+        : role === 'doctor'
+          ? doctorNavigationItems
+          : role === 'receptionist'
+            ? receptionistNavigationItems
+            : role === 'admin'
+              ? adminNavigationItems
         : publicNavigationItems;
 
   useEffect(() => {
     let active = true;
-    getCurrentUser()
-      .then((response) => {
-        if (active) setUser(response?.user ?? null);
-      })
-      .catch((error) => {
+    const loadUser = async () => {
+      try {
+        const response = await getCurrentUser();
         if (!active) return;
-        if (error?.status === 401) setUser(null);
-        else console.error('Unable to load the signed-in user.', error);
-      })
-      .finally(() => {
+        const currentUser = response?.user ?? null;
+        setUser(currentUser);
+      } catch (error) {
+        if (!active) return;
+        if (error?.status === 401) {
+          setUser(null);
+        } else {
+          console.error('Unable to load the signed-in user or notifications.', error);
+        }
+      } finally {
         if (active) setAuthLoading(false);
-      });
-
+      }
+    };
+    const handleSessionChanged = () => { loadUser(); };
+    loadUser();
+    window.addEventListener('auth:session-changed', handleSessionChanged);
     return () => {
       active = false;
+      window.removeEventListener('auth:session-changed', handleSessionChanged);
     };
   }, []);
 
@@ -150,6 +184,8 @@ export default function NavigationBar() {
 
         <div className="flex shrink-0 items-center gap-1 sm:gap-3">
           {user ? (
+            <>
+            <NotificationBell />
             <div className="relative hidden sm:block" data-profile-menu>
               <button
                 type="button"
@@ -177,7 +213,7 @@ export default function NavigationBar() {
 
                   <div className="py-1">
                     <Link
-                      to={role === 'patient' ? '/profile' : role === 'staff' ? '/staff/support' : '/'}
+                      to={role === 'patient' ? '/profile' : role === 'staff' ? '/staff/support' : role === 'admin' ? '/admin/dashboard' : `/${role}/profile`}
                       onClick={() => setProfileOpen(false)}
                       className="flex items-center gap-3 px-4 py-2.5 text-sm text-on-surface transition hover:bg-surface-container"
                       role="menuitem"
@@ -197,7 +233,7 @@ export default function NavigationBar() {
                       </Link>
                     )}
                     <Link
-                      to={role === 'patient' ? '/support' : '/staff/support'}
+                      to={role === 'patient' ? '/support' : role === 'admin' ? '/admin/support' : role === 'staff' ? '/staff/support' : '/notifications'}
                       onClick={() => setProfileOpen(false)}
                       className="flex items-center gap-3 px-4 py-2.5 text-sm text-on-surface transition hover:bg-surface-container"
                       role="menuitem"
@@ -222,6 +258,7 @@ export default function NavigationBar() {
                 </div>
               )}
             </div>
+            </>
           ) : (
             !authLoading && (
               <Link
@@ -271,6 +308,14 @@ export default function NavigationBar() {
 
             {user ? (
               <>
+                <Link
+                  to="/notifications"
+                  onClick={closeMenu}
+                  className="flex items-center gap-3 rounded-lg px-4 py-2.5 text-sm text-on-surface hover:bg-surface-container"
+                >
+                  <span className="material-symbols-outlined text-[20px] text-primary">notifications</span>
+                  Notifications
+                </Link>
                 <div className="mt-2 flex items-center gap-3 rounded-xl bg-surface-container-low px-3 py-3">
                   <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-on-primary">
                     {initials(user.name)}
@@ -281,7 +326,7 @@ export default function NavigationBar() {
                   </div>
                 </div>
                 <Link
-                  to={role === 'patient' ? '/profile' : '/staff/support'}
+                  to={role === 'patient' ? '/profile' : role === 'staff' ? '/staff/support' : role === 'admin' ? '/admin/dashboard' : `/${role}/profile`}
                   onClick={closeMenu}
                   className="flex items-center gap-3 rounded-lg px-4 py-2.5 text-sm text-on-surface hover:bg-surface-container"
                 >
@@ -299,7 +344,7 @@ export default function NavigationBar() {
                   </Link>
                 )}
                 <Link
-                  to={role === 'patient' ? '/support' : '/staff/support'}
+                  to={role === 'patient' ? '/support' : role === 'admin' ? '/admin/support' : role === 'staff' ? '/staff/support' : '/notifications'}
                   onClick={closeMenu}
                   className="flex items-center gap-3 rounded-lg px-4 py-2.5 text-sm text-on-surface hover:bg-surface-container"
                 >

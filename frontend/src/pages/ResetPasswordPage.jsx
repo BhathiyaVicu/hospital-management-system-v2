@@ -4,6 +4,7 @@ import { resetPassword } from '../services/api';
 
 export default function ResetPasswordPage() {
   const navigate = useNavigate();
+  const accessToken = new URLSearchParams(window.location.hash.slice(1)).get('access_token');
   const [form, setForm] = useState({ newPassword: '', confirmPassword: '' });
   const [message, setMessage] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -53,7 +54,8 @@ export default function ResetPasswordPage() {
 
     setSubmitting(true);
     try {
-      const response = await resetPassword({ newPassword: form.newPassword });
+      if (!accessToken) throw new Error('Open the secure password reset link sent to your email before setting a new password.');
+      const response = await resetPassword({ newPassword: form.newPassword, accessToken });
       navigate('/login', { replace: true, state: { message: response.message } });
     } catch (error) {
       setMessage(error.message || 'Unable to change password.');

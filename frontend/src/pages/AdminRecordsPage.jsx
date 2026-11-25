@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import PortalHeading from '../components/common/PortalHeading';
 import {
   AdminEmptyState,
@@ -11,24 +11,34 @@ import {
 } from '../components/admin/AdminComponents';
 import {
   createAdminClinic,
+  createAdminAdmin,
   createAdminDoctor,
   createAdminReceptionist,
-  createAdminService,
+  createAdminSpecialty,
   createAdminStaff,
+  deleteAdminDoctor,
+  deleteAdminAdmin,
+  deleteAdminReceptionist,
+  deleteAdminSpecialty,
+  deleteAdminStaff,
   getAdminDoctor,
+  getAdminAdmins,
   getAdminLookups,
   getAdminPatient,
+  getAdminReceptionistDetail,
+  getAdminStaffDetail,
   getAdminPatients,
   getAdminDoctors,
   getAdminClinics,
-  getAdminServices,
+  getAdminSpecialties,
   getAdminReceptionists,
   getAdminStaff,
   updateAdminClinic,
+  updateAdminAdmin,
   updateAdminDoctor,
   updateAdminPatient,
   updateAdminReceptionist,
-  updateAdminService,
+  updateAdminSpecialty,
   updateAdminStaff,
 } from '../services/api';
 
@@ -68,6 +78,7 @@ const configs = {
       { key: 'name', label: 'Clinician' }, { key: 'title', label: 'Title' },
       { key: 'specialties', label: 'Primary specialty', render: (row) => row.specialties?.[0] || '—' },
       { key: 'clinicId', label: 'Clinic', render: (row, lookups) => lookups.clinics.find((clinic) => clinic.id === row.clinicId)?.name || '—' },
+      { key: 'consultationFee', label: 'Fee', render: (row) => `LKR ${row.consultationFee}` },
       { key: 'isActive', label: 'Account', render: (row) => <AdminStatus active={row.isActive} /> },
     ],
     fields: [
@@ -76,7 +87,7 @@ const configs = {
       { key: 'password', label: 'Temporary password', type: 'password', requiredOnCreate: true },
       { key: 'title', label: 'Professional title', required: true },
       { key: 'yearsOfExperience', label: 'Years of experience', type: 'number', min: 0 },
-      { key: 'consultationFee', label: 'Consultation fee', type: 'number', min: 0, required: true },
+      { key: 'consultationFee', label: 'Consultation fee (LKR)', type: 'number', min: 0, required: true },
       { key: 'image', label: 'Profile image URL', type: 'url' },
       { key: 'clinicId', label: 'Clinic', type: 'select', optionsKey: 'clinics' },
       { key: 'primarySpecialtyId', label: 'Primary specialty', type: 'select', optionsKey: 'specialties', required: true },
@@ -107,32 +118,29 @@ const configs = {
       { ...activeField, updateOnly: true },
     ],
   },
-  services: {
-    title: 'Healthcare Services & Tariffs',
-    description: 'Configure service definitions, consultation fees, duration, and optional clinical associations.',
-    list: getAdminServices,
-    create: createAdminService,
-    save: updateAdminService,
+  specialties: {
+    title: 'Clinical Specialties',
+    singular: 'specialty',
+    description: 'Manage the clinical specialties used in the provider directory and doctor profiles.',
+    list: getAdminSpecialties,
+    create: createAdminSpecialty,
+    save: updateAdminSpecialty,
+    statusFilter: false,
     key: 'id',
     columns: [
-      { key: 'name', label: 'Service' }, { key: 'slug', label: 'Code' },
-      { key: 'durationMinutes', label: 'Duration', render: (row) => `${row.durationMinutes} min` },
-      { key: 'isActive', label: 'Status', render: (row) => <AdminStatus active={row.isActive} /> },
+      { key: 'name', label: 'Specialty' }, { key: 'slug', label: 'Code' },
+      { key: 'description', label: 'Description' },
     ],
     fields: [
-      { key: 'name', label: 'Service name', required: true }, { key: 'slug', label: 'Service code', required: true },
-      { key: 'durationMinutes', label: 'Duration (minutes)', type: 'number', min: 10, defaultValue: 30, required: true },
-      { key: 'fee', label: 'Fee', type: 'number', min: 0, required: true },
-      { key: 'description', label: 'Clinical notes', type: 'textarea' },
-      { key: 'clinicIds', label: 'Associated clinics', type: 'multi', optionsKey: 'clinics', updateOnly: true },
-      { key: 'doctorIds', label: 'Associated doctors', type: 'multi', optionsKey: 'doctors', updateOnly: true },
-      { ...activeField, updateOnly: true },
+      { key: 'name', label: 'Specialty name', required: true },
+      { key: 'description', label: 'Description', type: 'textarea' },
     ],
   },
   staff: {
     title: 'Staff & User Directory',
     description: 'Manage support staff accounts and review ticket workload.',
     list: getAdminStaff,
+    detail: getAdminStaffDetail,
     create: createAdminStaff,
     save: updateAdminStaff,
     key: 'id',
@@ -151,6 +159,7 @@ const configs = {
     title: 'Receptionist Management',
     description: 'Create receptionist accounts and limit each account to its assigned clinic locations.',
     list: getAdminReceptionists,
+    detail: getAdminReceptionistDetail,
     create: createAdminReceptionist,
     save: updateAdminReceptionist,
     key: 'id',
@@ -164,6 +173,27 @@ const configs = {
       { key: 'name', label: 'Full name', required: true }, { key: 'email', label: 'Email', type: 'email', required: true },
       { key: 'password', label: 'Temporary password', type: 'password', requiredOnCreate: true },
       { key: 'clinicIds', label: 'Assigned clinics', type: 'multi', optionsKey: 'clinics', required: true },
+      { ...activeField, updateOnly: true },
+    ],
+  },
+  admins: {
+    title: 'Admin Management',
+    singular: 'admin',
+    description: 'Create and manage Regular Admin accounts. Super Admin privileges cannot be granted here.',
+    list: getAdminAdmins,
+    create: createAdminAdmin,
+    save: updateAdminAdmin,
+    key: 'id',
+    columns: [
+      { key: 'name', label: 'Administrator' },
+      { key: 'email', label: 'Email' },
+      { key: 'isActive', label: 'Status', render: (row) => <AdminStatus active={row.isActive} /> },
+      { key: 'createdAt', label: 'Created', render: (row) => formatAdminDate(row.createdAt) },
+    ],
+    fields: [
+      { key: 'name', label: 'Full name', required: true },
+      { key: 'email', label: 'Email', type: 'email', required: true },
+      { key: 'password', label: 'Temporary password', type: 'password', requiredOnCreate: true },
       { ...activeField, updateOnly: true },
     ],
   },
@@ -221,7 +251,7 @@ function RecordForm({ config, record, lookups, saving, onCancel, onSave, error }
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/50 p-3 sm:p-5" role="presentation">
       <section role="dialog" aria-modal="true" aria-labelledby="admin-form-title" className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl sm:p-7">
-        <h2 id="admin-form-title" className="text-xl font-semibold">{createMode ? `Add ${config.title.replace(/s$/, '')}` : `Edit ${config.title.replace(/s$/, '')}`}</h2>
+        <h2 id="admin-form-title" className="text-xl font-semibold">{createMode ? `Add ${config.singular || config.title.replace(/s$/, '')}` : `Edit ${config.singular || config.title.replace(/s$/, '')}`}</h2>
         <form onSubmit={submit} className="mt-5">
           <div className="grid gap-4 sm:grid-cols-2">
             {fields.map((field) => (
@@ -246,7 +276,8 @@ function RecordForm({ config, record, lookups, saving, onCancel, onSave, error }
                           value={values[field.key] ?? ''}
                           onChange={(event) => update(field.key, event.target.value)}
                           required={field.required || (field.requiredOnCreate && createMode)}
-                          minLength={8}
+                          minLength={12}
+                          maxLength={128}
                           className={`${inputClass} pr-10`}
                           placeholder="••••••••"
                         />
@@ -260,7 +291,7 @@ function RecordForm({ config, record, lookups, saving, onCancel, onSave, error }
                             {showPassword ? 'visibility_off' : 'visibility'}
                           </span>
                         </button>
-                        <span className="mt-1 block text-xs text-on-surface-variant">Minimum 8 characters</span>
+                        <span className="mt-1 block text-xs text-on-surface-variant">Minimum 12 characters</span>
                       </div>
                     ) : (
                       <input type={field.type === 'comma' ? 'text' : field.type || 'text'} min={field.min} value={values[field.key] ?? ''} onChange={(event) => update(field.key, event.target.value)} required={field.required || (field.requiredOnCreate && createMode)} className={inputClass} />
@@ -284,7 +315,9 @@ function RecordForm({ config, record, lookups, saving, onCancel, onSave, error }
 }
 
 export default function AdminRecordsPage({ resource }) {
+  const navigate = useNavigate();
   const config = configs[resource];
+  const location = useLocation();
   const { recordId } = useParams();
   const [records, setRecords] = useState([]);
   const [lookups, setLookups] = useState({ clinics: [], specialties: [], doctors: [] });
@@ -296,18 +329,33 @@ export default function AdminRecordsPage({ resource }) {
   const [detail, setDetail] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [pendingStatus, setPendingStatus] = useState(null);
+  const [pendingDelete, setPendingDelete] = useState(null);
+  const [pendingAccountDelete, setPendingAccountDelete] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
+  const [errorState, setErrorState] = useState(null);
+  const error = errorState?.path === location.pathname ? errorState.message : '';
+  const setError = useCallback((message) => {
+    setErrorState(message ? { path: location.pathname, message } : null);
+  }, [location.pathname]);
+  const [notice, setNotice] = useState(null);
   const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
   const pageSize = 20;
+  const activePath = useRef(location.pathname);
 
   useEffect(() => {
-    if (!['doctors', 'services', 'receptionists'].includes(resource)) return;
-    getAdminLookups().then(({ data }) => setLookups(data)).catch((requestError) => setError(requestError.message || 'Unable to load lookup values.'));
-  }, [resource]);
+    activePath.current = location.pathname;
+  }, [location.pathname]);
+
+  useEffect(() => {
+    if (!['doctors', 'receptionists'].includes(resource)) return undefined;
+    let active = true;
+    getAdminLookups()
+      .then(({ data }) => { if (active) setLookups(data); })
+      .catch((requestError) => { if (active) setError(requestError.message || 'Unable to load lookup values.'); });
+    return () => { active = false; };
+  }, [resource, setError]);
 
   useEffect(() => {
     let active = true;
@@ -321,7 +369,7 @@ export default function AdminRecordsPage({ resource }) {
       .catch((requestError) => { if (active) setError(requestError.message || 'Unable to load records.'); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [config, resource, search, status, specialtyId, clinicId, page]);
+  }, [config, resource, search, status, specialtyId, clinicId, page, setError]);
 
   useEffect(() => {
     if (!recordId) {
@@ -344,7 +392,7 @@ export default function AdminRecordsPage({ resource }) {
       setDetail(existing);
       setLoading(false);
     }
-  }, [recordId, config, records]);
+  }, [recordId, config, records, setError]);
 
   const title = config.title;
   const detailTitle = useMemo(() => detail?.name || 'Record details', [detail]);
@@ -366,6 +414,7 @@ export default function AdminRecordsPage({ resource }) {
   };
 
   const save = async (payload) => {
+    const requestPath = location.pathname;
     setSaving(true);
     setError('');
     try {
@@ -373,8 +422,9 @@ export default function AdminRecordsPage({ resource }) {
       else if (config.save) await config.save(record[config.key], payload);
       setModalOpen(false);
       setRecord(null);
-      setNotice('Changes saved successfully.');
+      if (activePath.current === requestPath) setNotice({ path: requestPath, message: 'Changes saved successfully.' });
       const { data, pagination } = await config.list({ search, status, specialtyId, clinicId, limit: pageSize, offset: page * pageSize });
+      if (activePath.current !== requestPath) return;
       setRecords(data || []);
       setTotal(pagination?.total || 0);
       if (recordId && config.detail) {
@@ -389,12 +439,14 @@ export default function AdminRecordsPage({ resource }) {
   };
 
   const confirmStatusChange = async () => {
-    if (!pendingStatus) return;
-    const updated = { ...pendingStatus.record, isActive: !pendingStatus.record.isActive };
+    if (!pendingStatus || pendingStatus.path !== location.pathname) return;
+    const requestPath = location.pathname;
+    const currentRecord = pendingStatus.record;
+    const updated = { ...currentRecord, isActive: !currentRecord.isActive };
     try {
       if (resource === 'patients') {
-        const patientDetails = await getAdminPatient(pendingStatus.record[config.key]);
-        await updateAdminPatient(pendingStatus.record[config.key], {
+        const patientDetails = await getAdminPatient(currentRecord[config.key]);
+        await updateAdminPatient(currentRecord[config.key], {
           name: patientDetails.data.name,
           email: patientDetails.data.email,
           phone: patientDetails.data.phone,
@@ -402,9 +454,9 @@ export default function AdminRecordsPage({ resource }) {
           isActive: updated.isActive,
         });
       } else if (resource === 'doctors') {
-        const doctorDetails = await getAdminDoctor(pendingStatus.record.id);
+        const doctorDetails = await getAdminDoctor(currentRecord.id);
         const doctor = doctorDetails.data;
-        await updateAdminDoctor(pendingStatus.record.id, {
+        await updateAdminDoctor(currentRecord.id, {
           name: doctor.name,
           email: doctor.email,
           title: doctor.title,
@@ -421,33 +473,97 @@ export default function AdminRecordsPage({ resource }) {
           isActive: updated.isActive,
         });
       } else if (resource === 'clinics') {
-        const clinic = pendingStatus.record;
+        const clinic = currentRecord;
         await updateAdminClinic(clinic.id, { name: clinic.name, city: clinic.city, address: clinic.address, phone: clinic.phone, isActive: updated.isActive });
-      } else if (resource === 'services') {
-        const service = pendingStatus.record;
-        await updateAdminService(service.id, {
-          name: service.name, slug: service.slug, description: service.description,
-          durationMinutes: Number(service.durationMinutes), fee: Number(service.fee),
-          clinicIds: service.clinicIds || [],
-          doctorIds: service.doctorIds || [], isActive: updated.isActive,
-        });
       } else if (resource === 'staff') {
-        await updateAdminStaff(pendingStatus.record.id, { name: pendingStatus.record.name, email: pendingStatus.record.email, isActive: updated.isActive });
+        await updateAdminStaff(currentRecord.id, { name: currentRecord.name, email: currentRecord.email, isActive: updated.isActive });
+      } else if (resource === 'admins') {
+        await updateAdminAdmin(currentRecord.id, {
+          name: currentRecord.name, email: currentRecord.email, isActive: updated.isActive,
+        });
       } else {
-        await updateAdminReceptionist(pendingStatus.record.id, {
-          name: pendingStatus.record.name,
-          email: pendingStatus.record.email,
+        await updateAdminReceptionist(currentRecord.id, {
+          name: currentRecord.name,
+          email: currentRecord.email,
           isActive: updated.isActive,
-          clinicIds: pendingStatus.record.clinicIds || [],
+          clinicIds: currentRecord.clinicIds || [],
         });
       }
       setPendingStatus(null);
-      setNotice(`Account ${updated.isActive ? 'reactivated' : 'deactivated'}.`);
+      if (activePath.current === requestPath) {
+        setNotice({ path: requestPath, message: `Account ${updated.isActive ? 'reactivated' : 'deactivated'}.` });
+      }
       const { data } = await config.list({ search, status, specialtyId, clinicId, limit: pageSize, offset: page * pageSize });
-      setRecords(data || []);
+      if (activePath.current === requestPath) {
+        setRecords(data || []);
+        if (recordId && config.detail) {
+          const { data: updatedDetail } = await config.detail(currentRecord[config.key]);
+          setDetail(updatedDetail);
+        }
+      }
     } catch (requestError) {
       setError(requestError.message || 'Unable to change account status.');
       setPendingStatus(null);
+    }
+  };
+
+  const confirmSpecialtyDelete = async () => {
+    if (!pendingDelete || pendingDelete.path !== location.pathname) return;
+    const requestPath = location.pathname;
+    setError('');
+    try {
+      const { data } = await deleteAdminSpecialty(pendingDelete.record.id);
+      if (activePath.current !== requestPath) return;
+      setPendingDelete(null);
+      setNotice({
+        path: requestPath,
+        message: data.inUse
+          ? 'This specialty is assigned to one or more doctors and cannot be deleted.'
+          : 'Specialty deleted.',
+      });
+      const { data: recordsResult, pagination } = await config.list({
+        search, status, specialtyId, clinicId, limit: pageSize, offset: page * pageSize,
+      });
+      if (activePath.current === requestPath) {
+        setRecords(recordsResult || []);
+        setTotal(pagination?.total || 0);
+      }
+    } catch (requestError) {
+      if (activePath.current === requestPath) {
+        setError(requestError.message || 'Unable to delete specialty.');
+        setPendingDelete(null);
+      }
+    }
+  };
+
+  const confirmAccountDelete = async () => {
+    if (!pendingAccountDelete || pendingAccountDelete.path !== location.pathname) return;
+    const requestPath = location.pathname;
+    const record = pendingAccountDelete.record;
+    setError('');
+    try {
+      if (resource === 'doctors') await deleteAdminDoctor(record.id);
+      else if (resource === 'admins') await deleteAdminAdmin(record.id);
+      else if (resource === 'staff') await deleteAdminStaff(record.id);
+      else await deleteAdminReceptionist(record.id);
+      setPendingAccountDelete(null);
+      if (recordId) {
+        navigate(`/admin/${resource}`, { replace: true });
+        return;
+      }
+      if (activePath.current === requestPath) {
+        setNotice({ path: requestPath, message: 'Account deleted.' });
+        const { data, pagination } = await config.list({
+          search, status, specialtyId, clinicId, limit: pageSize, offset: page * pageSize,
+        });
+        setRecords(data || []);
+        setTotal(pagination?.total || 0);
+      }
+    } catch (requestError) {
+      if (activePath.current === requestPath) {
+        setError(requestError.message || 'Unable to delete account. Deactivate the account to preserve its records.');
+        setPendingAccountDelete(null);
+      }
     }
   };
 
@@ -458,7 +574,22 @@ export default function AdminRecordsPage({ resource }) {
     if (!detail) return <AdminEmptyState title="Record not found" />;
     return (
       <>
-        <PortalHeading eyebrow="Administration · record details" title={detailTitle} description={resource === 'patients' ? 'Patient profile and care history.' : 'Clinician profile, availability, and appointment overview.'} actions={<Link to={`/admin/${resource}`} className="min-h-11 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm font-semibold">Back to directory</Link>} />
+        <PortalHeading
+          eyebrow="Administration · record details"
+          title={detailTitle}
+          description={resource === 'patients'
+            ? 'Patient profile and care history.'
+            : resource === 'doctors'
+              ? 'Clinician profile, availability, and appointment overview.'
+              : resource === 'staff'
+                ? 'Support staff profile, assignment history, and workload.'
+                : 'Receptionist profile, clinic assignments, and appointment history.'}
+          actions={(
+            <>
+              <Link to={`/admin/${resource}`} className="min-h-11 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm font-semibold">Back to directory</Link>
+            </>
+          )}
+        />
         {error && <AdminNotice>{error}</AdminNotice>}
         <div className="grid gap-5 lg:grid-cols-2">
           <AdminSection title={resource === 'patients' ? 'Patient profile' : 'Professional profile'}>
@@ -499,8 +630,10 @@ export default function AdminRecordsPage({ resource }) {
 
             <button type="button" onClick={() => openEdit(detail)} className="mt-5 min-h-11 rounded-lg bg-primary px-4 text-sm font-semibold text-on-primary">Edit record</button>
           </AdminSection>
-          {resource === 'doctors' ? <AdminSection title="Weekly availability"><AdminTable columns={[{ key: 'dayOfWeek', label: 'Weekday', render: (row) => ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][row.dayOfWeek] }, { key: 'startTime', label: 'Start' }, { key: 'endTime', label: 'End' }, { key: 'slotDurationMinutes', label: 'Slot length', render: (row) => `${row.slotDurationMinutes} min` }, { key: 'isAvailable', label: 'Available', render: (row) => row.isAvailable ? 'Yes' : 'No' }]} rows={detail.availability || []} /></AdminSection>
-            : <AdminSection title="Appointment history"><AdminTable columns={[{ key: 'scheduledStart', label: 'Date', render: (row) => formatAdminDate(row.scheduledStart, { timeStyle: 'short' }) }, { key: 'doctorName', label: 'Doctor' }, { key: 'clinicName', label: 'Clinic' }, { key: 'status', label: 'Status' }]} rows={detail.appointments || []} /></AdminSection>}
+          {resource === 'doctors' && <AdminSection title="Weekly availability"><AdminTable columns={[{ key: 'dayOfWeek', label: 'Weekday', render: (row) => ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][row.dayOfWeek] }, { key: 'startTime', label: 'Start' }, { key: 'endTime', label: 'End' }, { key: 'slotDurationMinutes', label: 'Slot length', render: (row) => `${row.slotDurationMinutes} min` }, { key: 'isAvailable', label: 'Available', render: (row) => row.isAvailable ? 'Yes' : 'No' }]} rows={detail.availability || []} /></AdminSection>}
+          {resource === 'patients' && <AdminSection title="Appointment history"><AdminTable columns={[{ key: 'scheduledStart', label: 'Date', render: (row) => formatAdminDate(row.scheduledStart, { timeStyle: 'short' }) }, { key: 'doctorName', label: 'Doctor' }, { key: 'clinicName', label: 'Clinic' }, { key: 'status', label: 'Status' }]} rows={detail.appointments || []} /></AdminSection>}
+          {resource === 'staff' && <AdminSection title="Assigned support tickets"><AdminTable columns={[{ key: 'ticketNumber', label: 'Ticket' }, { key: 'subject', label: 'Subject' }, { key: 'status', label: 'Status' }, { key: 'updatedAt', label: 'Updated', render: (row) => formatAdminDate(row.updatedAt) }]} rows={detail.tickets || []} /></AdminSection>}
+          {resource === 'receptionists' && <AdminSection title="Appointments created"><AdminTable columns={[{ key: 'scheduledStart', label: 'Date', render: (row) => formatAdminDate(row.scheduledStart, { timeStyle: 'short' }) }, { key: 'patientName', label: 'Patient' }, { key: 'clinicName', label: 'Clinic' }, { key: 'workflowStatus', label: 'Workflow status' }]} rows={detail.appointments || []} /></AdminSection>}
           {resource === 'patients' && <AdminSection title="Support ticket history" className="lg:col-span-2"><AdminTable columns={[{ key: 'ticketNumber', label: 'Reference' }, { key: 'subject', label: 'Subject' }, { key: 'category', label: 'Category' }, { key: 'status', label: 'Status' }, { key: 'createdAt', label: 'Created', render: (row) => formatAdminDate(row.createdAt) }]} rows={detail.tickets || []} /></AdminSection>}
         </div>
         {modalOpen && <RecordForm config={config} record={detail} lookups={lookups} saving={saving} onCancel={() => setModalOpen(false)} onSave={save} error={error} />}
@@ -516,12 +649,12 @@ export default function AdminRecordsPage({ resource }) {
         description={config.description}
         actions={config.create && <button type="button" onClick={() => { setRecord(null); setError(''); setModalOpen(true); }} className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-on-primary"><span className="material-symbols-outlined text-lg">add</span>Add record</button>}
       />
-      {notice && <AdminNotice type="success">{notice}</AdminNotice>}
+      {notice?.path === location.pathname && <AdminNotice type="success">{notice.message}</AdminNotice>}
       {error && <AdminNotice>{error}</AdminNotice>}
       <AdminSection>
         <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <label className="block"><span className="sr-only">Search records</span><input value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} placeholder="Search name, email or details" className="h-11 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-primary" /></label>
-          <select aria-label="Filter by account status" value={status} onChange={(event) => { setStatus(event.target.value); setPage(0); }} className="h-11 rounded-lg border border-slate-200 bg-white px-3 text-sm"><option value="">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option></select>
+          {config.statusFilter !== false && <select aria-label="Filter by account status" value={status} onChange={(event) => { setStatus(event.target.value); setPage(0); }} className="h-11 rounded-lg border border-slate-200 bg-white px-3 text-sm"><option value="">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option></select>}
           {config.filters?.includes('specialtyId') && <select aria-label="Filter by specialty" value={specialtyId} onChange={(event) => setSpecialtyId(event.target.value)} className="h-11 rounded-lg border border-slate-200 bg-white px-3 text-sm"><option value="">All specialties</option>{lookups.specialties.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>}
           {config.filters?.includes('clinicId') && <select aria-label="Filter by clinic" value={clinicId} onChange={(event) => setClinicId(event.target.value)} className="h-11 rounded-lg border border-slate-200 bg-white px-3 text-sm"><option value="">All clinics</option>{lookups.clinics.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>}
           <p className="self-center text-xs text-on-surface-variant">{total} records · page {page + 1}</p>
@@ -537,7 +670,9 @@ export default function AdminRecordsPage({ resource }) {
                   <Link to={`/admin/${resource}/${item[config.key]}`} className="font-semibold text-primary hover:underline">View</Link>
                 )}
                 <button type="button" onClick={() => openEdit(item)} className="font-semibold text-primary hover:underline">Edit</button>
-                {resource !== 'patients' && <button type="button" onClick={() => setPendingStatus({ record: item })} className="font-semibold text-on-surface-variant hover:text-error">{item.isActive ? 'Deactivate' : 'Reactivate'}</button>}
+                {['patients', 'doctors', 'staff', 'receptionists', 'admins'].includes(resource) && <button type="button" onClick={() => setPendingStatus({ path: location.pathname, record: item })} className="font-semibold text-on-surface-variant hover:text-error">{item.isActive ? 'Deactivate' : 'Reactivate'}</button>}
+                {['doctors', 'staff', 'receptionists', 'admins'].includes(resource) && <button type="button" onClick={() => setPendingAccountDelete({ path: location.pathname, record: item })} className="font-semibold text-red-600 hover:text-red-800 hover:underline">Delete</button>}
+                {resource === 'specialties' && <button type="button" onClick={() => setPendingDelete({ path: location.pathname, record: item })} className="font-semibold text-red-600 hover:text-red-800">Delete</button>}
               </div>
             )}
           />
@@ -545,7 +680,9 @@ export default function AdminRecordsPage({ resource }) {
         {total > pageSize && <div className="mt-4 flex items-center justify-between"><button type="button" disabled={!page} onClick={() => setPage((value) => Math.max(0, value - 1))} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm disabled:opacity-40">Previous</button><span className="text-sm text-on-surface-variant">{page * pageSize + 1}–{Math.min((page + 1) * pageSize, total)} of {total}</span><button type="button" disabled={(page + 1) * pageSize >= total} onClick={() => setPage((value) => value + 1)} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm disabled:opacity-40">Next</button></div>}
       </AdminSection>
       {modalOpen && <RecordForm config={config} record={record} lookups={lookups} saving={saving} onCancel={() => { setModalOpen(false); setRecord(null); }} onSave={save} error={error} />}
-      {pendingStatus && <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/50 p-4"><section role="dialog" aria-modal="true" aria-labelledby="confirm-account-title" className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"><h2 id="confirm-account-title" className="text-lg font-semibold">{pendingStatus.record.isActive ? 'Deactivate' : 'Reactivate'} this account?</h2><p className="mt-2 text-sm text-on-surface-variant">{pendingStatus.record.isActive ? 'Active sessions will be revoked. Existing appointments and history remain unchanged.' : 'This account will be able to sign in again.'}</p><div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setPendingStatus(null)} className="min-h-10 rounded-lg border border-slate-200 px-4 text-sm font-semibold">Keep current status</button><button type="button" onClick={confirmStatusChange} className="min-h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-on-primary">Confirm</button></div></section></div>}
+      {pendingStatus?.path === location.pathname && <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/50 p-4"><section role="dialog" aria-modal="true" aria-labelledby="confirm-account-title" className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"><h2 id="confirm-account-title" className="text-lg font-semibold">{pendingStatus.record.isActive ? 'Deactivate' : 'Reactivate'} this account?</h2><p className="mt-2 text-sm text-on-surface-variant">{pendingStatus.record.isActive ? 'Active sessions will be revoked. Existing appointments and history remain unchanged.' : 'This account will be able to sign in again.'}</p><div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setPendingStatus(null)} className="min-h-10 rounded-lg border border-slate-200 px-4 text-sm font-semibold">Keep current status</button><button type="button" onClick={confirmStatusChange} className="min-h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-on-primary">Confirm</button></div></section></div>}
+      {pendingDelete?.path === location.pathname && <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/50 p-4"><section role="dialog" aria-modal="true" aria-labelledby="confirm-specialty-delete-title" className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"><h2 id="confirm-specialty-delete-title" className="text-lg font-semibold">Delete this specialty?</h2><p className="mt-2 text-sm text-on-surface-variant">Specialties assigned to doctors are protected and cannot be deleted. Existing doctor and appointment records will not be removed.</p><div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setPendingDelete(null)} className="min-h-10 rounded-lg border border-slate-200 px-4 text-sm font-semibold">Cancel</button><button type="button" onClick={confirmSpecialtyDelete} className="min-h-10 rounded-lg bg-red-600 px-4 text-sm font-semibold text-white hover:bg-red-800">Delete specialty</button></div></section></div>}
+      {pendingAccountDelete?.path === location.pathname && <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/50 p-4"><section role="dialog" aria-modal="true" aria-labelledby="confirm-account-delete-title" className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"><h2 id="confirm-account-delete-title" className="text-lg font-semibold">Permanently delete this account?</h2><p className="mt-2 text-sm text-on-surface-variant">Historical appointments, assignments, or messages protect related accounts. If records exist, deletion will be blocked and you can deactivate the account instead.</p><div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setPendingAccountDelete(null)} className="min-h-10 rounded-lg border border-slate-200 px-4 text-sm font-semibold">Cancel</button><button type="button" onClick={confirmAccountDelete} className="min-h-10 rounded-lg bg-red-600 px-4 text-sm font-semibold text-white hover:bg-red-800">Delete account</button></div></section></div>}
     </>
   );
 }

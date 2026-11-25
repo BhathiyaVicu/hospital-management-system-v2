@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { doctorCalendarSchema, doctorDateScheduleSchema } from './workspace.js';
 
 const uuid = z.string().uuid();
 const time = z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/);
@@ -16,6 +17,14 @@ export const schedulesListSchema = z.object({
   }).refine((value) => (new Date(`${value.to}T00:00:00Z`) - new Date(`${value.from}T00:00:00Z`)) / 86400000 <= 365, {
     message: 'Schedule date ranges cannot exceed one year.',
   }),
+});
+
+export const adminDoctorCalendarSchema = z.object({
+  query: doctorCalendarSchema.shape.query.extend({ doctorId: uuid }),
+});
+
+export const adminDoctorDateScheduleSchema = doctorDateScheduleSchema.extend({
+  query: z.object({ doctorId: uuid }),
 });
 
 const weeklyFields = {

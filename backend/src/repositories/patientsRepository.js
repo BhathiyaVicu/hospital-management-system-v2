@@ -1,111 +1,97 @@
-import { query, withTransaction } from '../config/database.js';
+import { supabaseAdmin } from '../config/supabase.js';
+import { run, rows, byId } from './supabaseHelpers.js';
 
-const PROFILE_SELECT = `
-  SELECT u.id AS "userId", u.name, u.email, p.id AS "patientId", p.phone,
-         p.date_of_birth AS "dateOfBirth", p.gender, p.blood_type AS "bloodType",
-         p.home_address AS "homeAddress",
-         p.emergency_contact_name AS "emergencyContactName",
-         p.emergency_contact_relationship AS "emergencyContactRelationship",
-         p.emergency_contact_phone AS "emergencyContactPhone",
-         p.preferred_clinic_id AS "preferredClinicId",
-         clinic.name AS "preferredClinicName",
-         p.preferred_consultation_mode AS "preferredConsultationMode",
-         p.preferred_language AS "preferredLanguage",
-         p.wheelchair_accessible AS "wheelchairAccessible"
-  FROM users u
-  JOIN patients p ON p.user_id = u.id
-  LEFT JOIN clinics clinic ON clinic.id = p.preferred_clinic_id
-`;
+async function profileFor(userId) {
+  const [userResult, patientResult, clinics] = await Promise.all([
+    run(supabaseAdmin.from('users').select('*').eq('id', userId).eq('role', 'patient').maybeSingle()),
+    run(supabaseAdmin.from('patients').select('*').eq('user_id', userId).maybeSingle()),
+    rows('clinics'),
+  ]);
+  const user = userResult.data;
+  const patient = patientResult.data;
+  if (!user || !patient) return null;
+  return {
+    userId: user.id, name: user.name, email: user.email, patientId: patient.id, phone: patient.phone,
+    dateOfBirth: patient.date_of_birth, gender: patient.gender, bloodType: patient.blood_type,
+    homeAddress: patient.home_address, emergencyContactName: patient.emergency_contact_name,
+    emergencyContactRelationship: patient.emergency_contact_relationship,
+    emergencyContactPhone: patient.emergency_contact_phone,
+    preferredClinicId: patient.preferred_clinic_id,
+    preferredClinicName: byId(clinics).get(patient.preferred_clinic_id)?.name || null,
+    preferredConsultationMode: patient.preferred_consultation_mode,
+    preferredLanguage: patient.preferred_language, wheelchairAccessible: patient.wheelchair_accessible,
+  };
+}
 
 export async function getPatientProfile(userId) {
-  const result = await query(`${PROFILE_SELECT} WHERE u.id = $1 AND u.role = 'patient'`, [userId]);
-  return result.rows[0] || null;
+  return profileFor(userId);
 }
 
 export async function updatePatientProfile(userId, profile) {
-  return withTransaction(async (client) => {
-    const updatedUser = await client.query(
-      `UPDATE users SET name = $1
-       WHERE id = $2 AND role = 'patient'
-       RETURNING id`,
-      [`${profile.firstName} ${profile.lastName}`.trim(), userId],
-    );
-    if (!updatedUser.rowCount) return null;
-
-    await client.query(
-      `UPDATE patients SET
-         phone = $1, date_of_birth = $2, gender = $3, home_address = $4,
-         emergency_contact_name = $5, emergency_contact_relationship = $6,
-         emergency_contact_phone = $7, preferred_clinic_id = $8,
-         preferred_consultation_mode = $9, preferred_language = $10,
-         wheelchair_accessible = $11
-       WHERE user_id = $12`,
-      [
-        profile.phone || null,
-        profile.dateOfBirth || null,
-        profile.gender || null,
-        profile.homeAddress || null,
-        profile.emergencyContactName || null,
-        profile.emergencyContactRelationship || null,
-        profile.emergencyContactPhone || null,
-        profile.preferredClinicId || null,
-        profile.preferredConsultationMode || null,
-        profile.preferredLanguage || null,
-        profile.wheelchairAccessible ?? false,
-        userId,
-      ],
-    );
-
-    const result = await client.query(`${PROFILE_SELECT} WHERE u.id = $1 AND u.role = 'patient'`, [userId]);
-    return result.rows[0] || null;
-  });
+  const user = await run(supabaseAdmin.from('users').update({
+    name: `${profile.firstName} ${profile.lastName}`.trim(),
+  }).eq('id', userId).eq('role', 'patient').select('id').maybeSingle());
+  if (!user.data) return null;
+  const updated = await run(supabaseAdmin.from('patients').update({
+    phone: profile.phone || null,
+    date_of_birth: profile.dateOfBirth || null,
+    gender: profile.gender || null,
+    home_address: profile.homeAddress || null,
+    emergency_contact_name: profile.emergencyContactName || null,
+    emergency_contact_relationship: profile.emergencyContactRelationship || null,
+    emergency_contact_phone: profile.emergencyContactPhone || null,
+    preferred_clinic_id: profile.preferredClinicId || null,
+    preferred_consultation_mode: profile.preferredConsultationMode || null,
+    preferred_language: profile.preferredLanguage || null,
+    wheelchair_accessible: profile.wheelchairAccessible ?? false,
+  }).eq('user_id', userId).select('id').maybeSingle());
+  return updated.data ? profileFor(userId) : null;
 }
 
 export async function getPatientDashboard(userId, patientId) {
-  const [profile, appointmentSummary, upcomingAppointments, ticketSummary] = await Promise.all([
-    getPatientProfile(userId),
-    query(
-      `SELECT count(*) FILTER (WHERE status = 'confirmed' AND scheduled_start >= now())::int AS upcoming,
-              count(*) FILTER (WHERE status <> 'cancelled' AND (status = 'completed' OR scheduled_start < now()))::int AS past,
-              count(*) FILTER (WHERE status = 'cancelled')::int AS cancelled
-       FROM appointments WHERE patient_id = $1`,
-      [patientId],
-    ),
-    query(
-      `SELECT a.id, a.scheduled_start AS "scheduledStart", a.scheduled_end AS "scheduledEnd",
-              a.status, a.reason, a.consultation_fee_snapshot AS "consultationFee",
-              d.id AS "doctorId", u.name AS "doctorName", d.professional_title AS "doctorTitle",
-              d.profile_image_url AS "doctorImage", clinic.name AS "clinicName",
-              clinic.city AS "clinicCity", d.time_zone AS "timeZone"
-       FROM appointments a
-       JOIN doctors d ON d.id = a.doctor_id
-       JOIN users u ON u.id = d.user_id
-       LEFT JOIN clinics clinic ON clinic.id = d.clinic_id
-       WHERE a.patient_id = $1 AND a.status = 'confirmed' AND a.scheduled_start >= now()
-       ORDER BY a.scheduled_start
-       LIMIT 3`,
-      [patientId],
-    ),
-    query(
-      `SELECT count(*)::int AS total,
-              count(*) FILTER (WHERE status IN ('open', 'in_progress', 'waiting_for_patient'))::int AS active
-       FROM support_tickets WHERE patient_id = $1`,
-      [patientId],
-    ),
+  const [profile, appointments, doctors, users, clinics, tickets] = await Promise.all([
+    getPatientProfile(userId), rows('appointments'), rows('doctors'), rows('users'), rows('clinics'), rows('support_tickets'),
   ]);
+  const doctorMap = byId(doctors);
+  const userMap = byId(users);
+  const clinicMap = byId(clinics);
+  const patientAppointments = appointments.filter((appointment) => appointment.patient_id === patientId);
+  const now = new Date();
+  const upcoming = patientAppointments.filter((appointment) => appointment.status === 'confirmed'
+    && new Date(appointment.scheduled_start) >= now)
+    .sort((a, b) => a.scheduled_start.localeCompare(b.scheduled_start))
+    .slice(0, 3).map((appointment) => {
+      const doctor = doctorMap.get(appointment.doctor_id);
+      const clinic = clinicMap.get(doctor?.clinic_id);
+      return {
+        id: appointment.id, scheduledStart: appointment.scheduled_start, scheduledEnd: appointment.scheduled_end,
+        status: appointment.status, reason: appointment.reason,
+        consultationFee: appointment.consultation_fee_snapshot,
+        doctorId: doctor?.id, doctorName: userMap.get(doctor?.user_id)?.name,
+        doctorTitle: doctor?.professional_title, doctorImage: doctor?.profile_image_url,
+        clinicName: clinic?.name, clinicCity: clinic?.city, timeZone: doctor?.time_zone,
+      };
+    });
+  const patientTickets = tickets.filter((ticket) => ticket.patient_id === patientId);
   return {
     profile,
     appointments: {
-      summary: appointmentSummary.rows[0],
-      upcoming: upcomingAppointments.rows,
+      summary: {
+        upcoming: patientAppointments.filter((item) => item.status === 'confirmed' && new Date(item.scheduled_start) >= now).length,
+        past: patientAppointments.filter((item) => item.status !== 'cancelled'
+          && (item.status === 'completed' || new Date(item.scheduled_start) < now)).length,
+        cancelled: patientAppointments.filter((item) => item.status === 'cancelled').length,
+      },
+      upcoming,
     },
-    support: ticketSummary.rows[0],
+    support: {
+      total: patientTickets.length,
+      active: patientTickets.filter((item) => ['open', 'in_progress', 'waiting_for_patient'].includes(item.status)).length,
+    },
   };
 }
 
 export async function listPatientClinics() {
-  const result = await query(
-    `SELECT id, name, city FROM clinics WHERE is_active = TRUE ORDER BY name`,
-  );
-  return result.rows;
+  return (await rows('clinics')).filter((clinic) => clinic.is_active)
+    .map(({ id, name, city }) => ({ id, name, city })).sort((a, b) => a.name.localeCompare(b.name));
 }

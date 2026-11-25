@@ -22,6 +22,7 @@ export const patientParamsSchema = z.object({ params: z.object({ patientId: uuid
 export const appointmentParamsSchema = z.object({ params: z.object({ appointmentId: uuid }) });
 export const doctorParamsSchema = z.object({ params: z.object({ doctorId: uuid }) });
 export const clinicParamsSchema = z.object({ params: z.object({ clinicId: uuid }) });
+export const specialtyParamsSchema = z.object({ params: z.object({ specialtyId: uuid }) });
 export const serviceParamsSchema = z.object({ params: z.object({ serviceId: uuid }) });
 export const accountParamsSchema = z.object({ params: z.object({ userId: uuid }) });
 
@@ -83,6 +84,17 @@ export const updateClinicSchema = z.object({
   body: z.object({ ...clinicFields, isActive: z.boolean() }).strict(),
 });
 
+export const specialtyListSchema = z.object({ query: z.object(page) });
+const specialtyFields = {
+  name: z.string().trim().min(1).max(120),
+  description: z.string().trim().max(3000).default(''),
+};
+export const createSpecialtySchema = z.object({ body: z.object(specialtyFields).strict() });
+export const updateSpecialtySchema = z.object({
+  params: z.object({ specialtyId: uuid }),
+  body: z.object(specialtyFields).strict(),
+});
+
 export const serviceListSchema = z.object({ query: z.object(page) });
 const serviceFields = {
   name: z.string().trim().min(1).max(120),
@@ -131,8 +143,14 @@ export const appointmentListSchema = z.object({
 
 export const reportsSchema = z.object({
   query: z.object({
+    reportType: z.enum(['appointments', 'service-trends', 'clinic-activity', 'operational']).default('appointments'),
     from: z.string().date().default(() => new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10)),
     to: z.string().date().default(() => new Date().toISOString().slice(0, 10)),
+    clinicId: uuid.optional(),
+    specialtyId: uuid.optional(),
+    doctorId: uuid.optional(),
+    status: z.enum(['', 'confirmed', 'completed', 'cancelled', 'no_show']).optional().default(''),
+    grouping: z.enum(['daily', 'weekly', 'monthly']).default('daily'),
   }).refine((value) => value.from <= value.to, { message: 'The start date must be on or before the end date.' })
     .refine((value) => (new Date(`${value.to}T00:00:00Z`) - new Date(`${value.from}T00:00:00Z`)) / 86400000 <= 365, {
       message: 'Report date ranges cannot exceed one year.',

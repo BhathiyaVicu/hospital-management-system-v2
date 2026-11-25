@@ -1,5 +1,6 @@
 import * as supportRepository from '../repositories/supportRepository.js';
 import { recordActivity } from './auditService.js';
+import * as notificationRepository from '../repositories/notificationRepository.js';
 
 function requirePatientId(patientId) {
   if (patientId) return;
@@ -26,6 +27,16 @@ export async function createPatientTicket(user, payload) {
     error.status = 400;
     throw error;
   }
+  const staff = await supportRepository.listAvailableStaff();
+  await Promise.all(staff.map((member) => notificationRepository.create({
+    userId: member.id,
+    type: 'support_ticket_created',
+    title: 'New support ticket',
+    message: `A patient opened support ticket ${result.ticket.ticketNumber}.`,
+    link: `/staff/support/tickets/${result.ticket.id}`,
+    metadata: { ticketId: result.ticket.id },
+    dedupeKey: `support-ticket:${result.ticket.id}:created:${member.id}`,
+  })));
   return result.ticket;
 }
 
@@ -52,6 +63,16 @@ export async function replyAsPatient(user, ticketId, message) {
     error.status = 409;
     throw error;
   }
+  const recipients = result.assignedStaffId
+    ? [result.assignedStaffId]
+    : (await supportRepository.listAvailableStaff()).map((staff) => staff.id);
+  await Promise.all(recipients.map((userId) => notificationRepository.create({
+    userId, type: 'support_reply', title: 'New patient support reply',
+    message: `A patient replied to support ticket ${result.ticket.ticketNumber}.`,
+    link: `/staff/support/tickets/${ticketId}`,
+    metadata: { ticketId },
+    dedupeKey: `support-message:${result.messageId}:${userId}`,
+  })));
   return result.ticket;
 }
 
@@ -79,6 +100,16 @@ export async function replyAsStaff(user, ticketId, message, request) {
     error.status = 409;
     throw error;
   }
+  if (result.patientUserId) {
+    await notificationRepository.create({
+      userId: result.patientUserId, type: 'support_reply',
+      title: 'New support reply',
+      message: `A support staff member replied to ticket ${result.ticket.ticketNumber}.`,
+      link: `/dashboard/support/tickets/${ticketId}`,
+      metadata: { ticketId },
+      dedupeKey: `support-message:${result.messageId}:${result.patientUserId}`,
+    });
+  }
   await recordActivity({
     actor: { id: user.id, role: user.role },
     eventType: 'support.ticket.replied',
@@ -95,6 +126,22 @@ export async function setTicketStatus(ticketId, status, user = null, request = n
     const error = new Error(`Ticket status cannot transition from ${result.currentStatus} to ${status}.`);
     error.status = 409;
     throw error;
+  }
+  if (result.previousStatus !== status) {
+    const recipients = new Set([result.ticket.patientUserId, result.ticket.assignedStaffId]
+      .filter((recipientId) => recipientId && recipientId !== user?.id));
+    await Promise.all([...recipients].map((recipientId) => {
+      const isPatient = recipientId === result.ticket.patientUserId;
+      return notificationRepository.create({
+        userId: recipientId,
+        type: 'support_status_changed',
+        title: 'Support ticket updated',
+        message: `Ticket ${result.ticket.ticketNumber} status changed to ${status.replaceAll('_', ' ')}.`,
+        link: isPatient ? `/dashboard/support/tickets/${ticketId}` : `/staff/support/tickets/${ticketId}`,
+        metadata: { ticketId, status },
+        dedupeKey: `support-ticket:${ticketId}:status:${status}:${result.ticket.updatedAt}:${recipientId}`,
+      });
+    }));
   }
   if (user) {
     await recordActivity({
@@ -114,6 +161,17 @@ export async function assignTicket(ticketId, staffId, user = null, request = nul
     const error = new Error('The selected support staff account is not active.');
     error.status = 400;
     throw error;
+  }
+  if (staffId && result.previousAssignedStaffId !== staffId) {
+    await notificationRepository.create({
+      userId: staffId,
+      type: 'support_ticket_assigned',
+      title: 'Support ticket assigned',
+      message: `Ticket ${result.ticket.ticketNumber} has been assigned to you.`,
+      link: `/staff/support/tickets/${ticketId}`,
+      metadata: { ticketId },
+      dedupeKey: `support-ticket:${ticketId}:assigned:${staffId}:${result.ticket.updatedAt}`,
+    });
   }
   if (user) {
     await recordActivity({

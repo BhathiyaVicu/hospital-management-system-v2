@@ -1,15 +1,15 @@
 import * as doctorsRepository from '../repositories/doctorsRepository.js';
 
-function formatFee(value, currency = 'USD') {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency, maximumFractionDigits: 2 }).format(Number(value));
+function formatFee(value) {
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'LKR', maximumFractionDigits: 2 }).format(Number(value));
 }
 
 function presentDoctor(doctor) {
-  const { consultation_fee: fee, currency, years_of_experience: years, ...fields } = doctor;
+  const { consultation_fee: fee, currency: _currency, years_of_experience: years, ...fields } = doctor;
   return {
     ...fields,
     experience: years === null || years === undefined ? 'Experience not listed' : `${years} years`,
-    consultationFee: formatFee(fee, currency),
+    consultationFee: formatFee(fee),
     specialties: (doctor.specialties || []).map((specialty) => (
       typeof specialty === 'string' ? specialty : specialty.name
     )),
@@ -19,10 +19,7 @@ function presentDoctor(doctor) {
 export async function listDoctors(filters) {
   const result = await doctorsRepository.listDoctors(filters);
   return {
-    data: result.doctors.map((doctor) => presentDoctor({
-      ...doctor,
-      currency: doctor.currency || 'USD',
-    })),
+    data: result.doctors.map((doctor) => presentDoctor(doctor)),
     pagination: {
       total: result.total,
       limit: filters.limit,

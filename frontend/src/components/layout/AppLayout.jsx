@@ -5,7 +5,7 @@ import AdminLayout from '../admin/AdminLayout';
 import PatientLayout from './PatientLayout';
 
 const HIDE_FOOTER_ROUTES = [
-  '/login', '/register', '/verify-email',
+  '/login', '/register', '/auth/callback',
   '/forgot-password', '/reset-password',
 ];
 
@@ -16,7 +16,7 @@ function isDashboardPath(pathname) {
     pathname === '/profile' || pathname.startsWith('/profile/') ||
     pathname === '/support' || pathname.startsWith('/support/') ||
     pathname === '/staff/support' || pathname.startsWith('/staff/support/') ||
-    pathname === '/change-password'
+    pathname === '/change-password' || pathname === '/first-login' || pathname === '/notifications'
   );
 }
 

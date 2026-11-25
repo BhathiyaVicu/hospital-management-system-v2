@@ -94,16 +94,8 @@ export default function SpecialistDirectoryPage() {
                 </div>
               )}
               <div className="p-4">
-                <div className="flex items-center justify-between gap-2">
-                  <div>
-                    <div className="text-lg font-semibold text-on-surface">{doctor.name}</div>
-                    <div className="text-sm text-primary">{doctor.specialties?.[0] || doctor.title}</div>
-                  </div>
-                  <div className="flex items-center gap-1 rounded-full bg-surface-container px-2 py-1 text-xs font-medium text-on-surface">
-                    <span className="material-symbols-outlined text-sm">star</span>
-                    {doctor.rating}
-                  </div>
-                </div>
+                <div className="text-lg font-semibold text-on-surface">{doctor.name}</div>
+                <div className="text-sm text-primary">{doctor.specialties?.[0] || doctor.title}</div>
                 <div className="mt-3 text-sm text-on-surface-variant">{doctor.location}</div>
               </div>
             </Link>

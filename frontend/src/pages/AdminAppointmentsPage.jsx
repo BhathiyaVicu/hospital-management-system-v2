@@ -27,7 +27,7 @@ function AppointmentDetails({ appointmentId, onClose }) {
               ['Starts', formatAdminDate(appointment.scheduledStart, { timeStyle: 'short' })],
               ['Created', formatAdminDate(appointment.createdAt, { timeStyle: 'short' })],
               ['Cancelled', appointment.cancelledAt ? formatAdminDate(appointment.cancelledAt, { timeStyle: 'short' }) : '—'],
-              ['Cancelled by', appointment.cancelledBy || '—'], ['Fee snapshot', appointment.fee],
+              ['Cancelled by', appointment.cancelledBy || '—'], ['Fee snapshot', `LKR ${appointment.fee}`],
               ['Visit reason', appointment.reason || '—'],
             ].map(([label, value]) => <div key={label} className="rounded-lg bg-surface-container-low p-3"><p className="text-xs text-on-surface-variant">{label}</p><p className="mt-1 break-words text-sm font-medium">{value || '—'}</p></div>)}
           </div>

@@ -58,7 +58,7 @@ function localDateValue() {
 export default function HomePage() {
   const navigate = useNavigate();
   const [search, setSearch] = useState({ specialty: '', clinic: '', date: localDateValue() });
-  const [popularDoctorFilter, setPopularDoctorFilter] = useState('top-rated');
+  const [popularDoctorFilter, setPopularDoctorFilter] = useState('all');
   const [doctors, setDoctors] = useState([]);
   const [specialties, setSpecialties] = useState([]);
   const [clinics, setClinics] = useState([]);
@@ -99,11 +99,9 @@ export default function HomePage() {
     };
   }, []);
 
-  const visibleDoctors = [...doctors]
-    .filter((doctor) => popularDoctorFilter !== 'available' || doctor.availableToday)
-    .sort((first, second) => (
-    popularDoctorFilter === 'top-rated' ? Number(second.rating) - Number(first.rating) : 0
-    ));
+  const visibleDoctors = doctors.filter((doctor) => (
+    popularDoctorFilter !== 'available' || doctor.availableToday
+  ));
 
   const updateSearch = (event) => {
     const { name, value } = event.target;
@@ -325,12 +323,11 @@ export default function HomePage() {
               </span>
               <h2 className="mt-1 text-2xl font-semibold tracking-tight text-on-surface sm:text-3xl">Featured Medical Specialists</h2>
               <p className="mt-2 max-w-2xl text-sm leading-relaxed text-on-surface-variant sm:text-base">
-                Explore practitioner profiles, ratings, upcoming appointments, and consultation fees.
+                Explore practitioner profiles, upcoming appointments, and consultation fees.
               </p>
             </div>
             <div className="flex w-full gap-1 overflow-x-auto rounded-xl bg-surface-container-lowest p-1 shadow-sm md:w-auto">
               {[
-                ['top-rated', 'Top Rated'],
                 ['available', 'Available Today'],
                 ['all', 'All Specialists'],
               ].map(([value, label]) => (
@@ -361,10 +358,6 @@ export default function HomePage() {
                       <span className="material-symbols-outlined text-7xl">person</span>
                     </div>
                   )}
-                  <div className="absolute right-3 top-3 flex items-center gap-1 rounded-full bg-white/95 px-2.5 py-1 text-xs font-medium text-primary shadow-sm">
-                    <span className="material-symbols-outlined text-base text-amber-500" style={{ fontVariationSettings: "'FILL' 1" }}>star</span>
-                    {doctor.rating} ({doctor.reviews})
-                  </div>
                   <div className="absolute bottom-3 left-3 flex flex-wrap gap-1.5">
                     <span className="rounded-full bg-white/95 px-2.5 py-1 text-[11px] font-medium text-primary">In-Clinic</span>
                   </div>

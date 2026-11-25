@@ -10,7 +10,7 @@ import SignInPage from './pages/SignInPage';
 import RegisterPage from './pages/RegisterPage';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import ResetPasswordPage from './pages/ResetPasswordPage';
-import VerifyEmailPage from './pages/VerifyEmailPage';
+import AuthCallbackPage from './pages/AuthCallbackPage';
 import RequireAuth from './components/auth/RequireAuth';
 import PatientDashboardPage from './pages/PatientDashboardPage';
 import PatientAppointmentsPage from './pages/PatientAppointmentsPage';
@@ -24,10 +24,13 @@ import StaffSupportPage from './pages/StaffSupportPage';
 import StaffTicketDetailsPage from './pages/StaffTicketDetailsPage';
 import BookAppointmentPage from './pages/BookAppointmentPage';
 import ChangePasswordPage from './pages/ChangePasswordPage';
+import FirstLoginPage from './pages/FirstLoginPage';
 import PatientFindDoctorPage from './pages/PatientFindDoctorPage';
 import HowItWorksPage from './pages/HowItWorksPage';
 import HelpPage from './pages/HelpPage';
 import PatientDoctorProfileBookingPage from './pages/PatientDoctorProfileBookingPage';
+import NotificationsPage from './pages/NotificationsPage';
+import PublicOnlyRoute from './components/auth/PublicOnlyRoute';
 
 const AdminDashboardPage = lazy(() => import('./pages/AdminDashboardPage'));
 const AdminRecordsPage = lazy(() => import('./pages/AdminRecordsPage'));
@@ -35,7 +38,7 @@ const AdminAppointmentsPage = lazy(() => import('./pages/AdminAppointmentsPage')
 const AdminReportsPage = lazy(() => import('./pages/AdminReportsPage'));
 const AdminActivityLogsPage = lazy(() => import('./pages/AdminActivityLogsPage'));
 const AdminSupportPage = lazy(() => import('./pages/AdminSupportPage'));
-const AdminSchedulesPage = lazy(() => import('./pages/AdminSchedulesPage'));
+const AdminDoctorSchedulePage = lazy(() => import('./pages/AdminDoctorSchedulePage'));
 const DoctorDashboardPage = lazy(() => import('./pages/DoctorDashboardPage'));
 const DoctorAppointmentsPage = lazy(() => import('./pages/DoctorAppointmentsPage'));
 const DoctorSchedulePage = lazy(() => import('./pages/DoctorSchedulePage'));
@@ -69,20 +72,22 @@ function AppShell() {
      <AppLayout>
         <Routes>
           {/* PUBLIC ROUTES */}
-          <Route path="/" element={<HomePage />} />
-          <Route path="/doctors" element={<FindDoctorPage />} />
-          <Route path="/specialists" element={<SpecialistDirectoryPage />} />
-          <Route path="/doctors/:doctorId" element={<DoctorProfileBookingPage />} />
+          <Route path="/" element={<PublicOnlyRoute><HomePage /></PublicOnlyRoute>} />
+          <Route path="/doctors" element={<PublicOnlyRoute><FindDoctorPage /></PublicOnlyRoute>} />
+          <Route path="/specialists" element={<PublicOnlyRoute><SpecialistDirectoryPage /></PublicOnlyRoute>} />
+          <Route path="/doctors/:doctorId" element={<PublicOnlyRoute><DoctorProfileBookingPage /></PublicOnlyRoute>} />
           <Route path="/doctors/:doctorId/book" element={<RequireAuth roles={['patient']}><BookAppointmentPage /></RequireAuth>} />
-          <Route path="/find-doctor" element={<PatientFindDoctorPage />} />
-          <Route path="/login" element={<SignInPage />} />
-          <Route path="/register" element={<RegisterPage />} />
-          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-          <Route path="/reset-password" element={<ResetPasswordPage />} />
-          <Route path="/steps" element={<HowItWorksPage />} />
-          <Route path="/help" element={<HelpPage />} />
-          <Route path="/verify-email" element={<VerifyEmailPage />} />
+          <Route path="/find-doctor" element={<PublicOnlyRoute><PatientFindDoctorPage /></PublicOnlyRoute>} />
+          <Route path="/login" element={<PublicOnlyRoute><SignInPage /></PublicOnlyRoute>} />
+          <Route path="/register" element={<PublicOnlyRoute><RegisterPage /></PublicOnlyRoute>} />
+          <Route path="/forgot-password" element={<PublicOnlyRoute><ForgotPasswordPage /></PublicOnlyRoute>} />
+          <Route path="/reset-password" element={<PublicOnlyRoute><ResetPasswordPage /></PublicOnlyRoute>} />
+          <Route path="/auth/callback" element={<AuthCallbackPage />} />
+          <Route path="/steps" element={<PublicOnlyRoute><HowItWorksPage /></PublicOnlyRoute>} />
+          <Route path="/help" element={<PublicOnlyRoute><HelpPage /></PublicOnlyRoute>} />
           <Route path="/change-password" element={<RequireAuth roles={['patient', 'doctor', 'staff', 'receptionist', 'admin']}><ChangePasswordPage /></RequireAuth>} />
+          <Route path="/first-login" element={<RequireAuth roles={['patient', 'doctor', 'staff', 'receptionist', 'admin']}><FirstLoginPage /></RequireAuth>} />
+          <Route path="/notifications" element={<RequireAuth roles={['patient', 'doctor', 'staff', 'receptionist', 'admin']}><NotificationsPage /></RequireAuth>} />
 
           {/* PATIENT ROUTES (Dashboard) */}
           <Route path="/dashboard" element={<RequireAuth roles={['patient']}><PatientDashboardPage /></RequireAuth>} />
@@ -114,11 +119,14 @@ function AppShell() {
           <Route path="/admin/patients/:recordId" element={<RequireAuth roles={['admin']}><AdminRecordsPage resource="patients" /></RequireAuth>} />
           <Route path="/admin/doctors" element={<RequireAuth roles={['admin']}><AdminRecordsPage resource="doctors" /></RequireAuth>} />
           <Route path="/admin/doctors/:recordId" element={<RequireAuth roles={['admin']}><AdminRecordsPage resource="doctors" /></RequireAuth>} />
-          <Route path="/admin/schedules" element={<RequireAuth roles={['admin']}><AdminSchedulesPage /></RequireAuth>} />
+          <Route path="/admin/schedules/doctor" element={<RequireAuth roles={['admin']}><AdminDoctorSchedulePage /></RequireAuth>} />
           <Route path="/admin/clinics" element={<RequireAuth roles={['admin']}><AdminRecordsPage resource="clinics" /></RequireAuth>} />
-          <Route path="/admin/services" element={<RequireAuth roles={['admin']}><AdminRecordsPage resource="services" /></RequireAuth>} />
+          <Route path="/admin/specialties" element={<RequireAuth roles={['admin']}><AdminRecordsPage resource="specialties" /></RequireAuth>} />
           <Route path="/admin/staff" element={<RequireAuth roles={['admin']}><AdminRecordsPage resource="staff" /></RequireAuth>} />
+          <Route path="/admin/staff/:recordId" element={<RequireAuth roles={['admin']}><AdminRecordsPage resource="staff" /></RequireAuth>} />
           <Route path="/admin/receptionists" element={<RequireAuth roles={['admin']}><AdminRecordsPage resource="receptionists" /></RequireAuth>} />
+          <Route path="/admin/receptionists/:recordId" element={<RequireAuth roles={['admin']}><AdminRecordsPage resource="receptionists" /></RequireAuth>} />
+          <Route path="/admin/admins" element={<RequireAuth roles={['admin']} requireSuperAdmin><AdminRecordsPage resource="admins" /></RequireAuth>} />
           <Route path="/admin/support" element={<RequireAuth roles={['admin']}><AdminSupportPage /></RequireAuth>} />
           <Route path="/admin/appointments" element={<RequireAuth roles={['admin']}><AdminAppointmentsPage /></RequireAuth>} />
           <Route path="/admin/reports" element={<RequireAuth roles={['admin']}><AdminReportsPage /></RequireAuth>} />
@@ -141,6 +149,7 @@ function AppShell() {
           <Route path="/receptionist/appointments" element={<RequireAuth roles={['receptionist']}><ReceptionistAppointmentsPage /></RequireAuth>} />
           <Route path="/receptionist/patients" element={<RequireAuth roles={['receptionist']}><ReceptionistPatientsPage /></RequireAuth>} />
           <Route path="/receptionist/profile" element={<RequireAuth roles={['receptionist']}><WorkspaceProfilePage role="receptionist" /></RequireAuth>} />
+
         </Routes>
      </AppLayout>
     </Suspense>

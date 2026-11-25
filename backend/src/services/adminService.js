@@ -1,4 +1,3 @@
-import bcrypt from 'bcryptjs';
 import * as adminRepository from '../repositories/adminRepository.js';
 import { recordActivity } from './auditService.js';
 
@@ -59,7 +58,6 @@ export async function createDoctor(payload, actor, request) {
   await validateReferences({ clinicId: payload.clinicId, specialtyIds: [payload.primarySpecialtyId] });
   const doctor = await adminRepository.createDoctor({
     ...payload,
-    passwordHash: await bcrypt.hash(payload.password, 12),
   });
   await recordActivity({
     actor, targetUserId: doctor.userId, eventType: 'doctor.created', request,
@@ -80,6 +78,16 @@ export async function updateDoctor(doctorId, payload, actor, request) {
   return detail;
 }
 
+export async function deleteDoctor(doctorId, actor, request) {
+  const deleted = await adminRepository.deleteDoctor(doctorId);
+  if (!deleted) throw httpError('Doctor profile row was not found.', 404);
+  await recordActivity({
+    actor, eventType: 'doctor.deleted', request,
+    details: { doctorId, userId: deleted.id },
+  });
+  return deleted;
+}
+
 export async function listClinics(filters) {
   return adminRepository.listClinics(filters);
 }
@@ -92,6 +100,33 @@ export async function saveClinic(clinicId, payload, actor, request) {
     details: { clinicId: clinic.id, isActive: clinic.isActive },
   });
   return clinic;
+}
+
+export async function listSpecialties(filters) {
+  return adminRepository.listSpecialties(filters);
+}
+
+export async function saveSpecialty(specialtyId, payload, actor, request) {
+  const specialty = await adminRepository.saveSpecialty(specialtyId, payload);
+  if (!specialty) throw notFound();
+  await recordActivity({
+    actor, eventType: specialtyId ? 'specialty.updated' : 'specialty.created', request,
+    details: { specialtyId: specialty.id },
+  });
+  return specialty;
+}
+
+export async function deleteSpecialty(specialtyId, actor, request) {
+  const specialty = await adminRepository.deleteSpecialty(specialtyId);
+  if (!specialty) throw notFound();
+  if (specialty.inUse) {
+    throw httpError('This specialty is assigned to one or more doctors and cannot be deleted.', 409);
+  }
+  await recordActivity({
+    actor, eventType: 'specialty.deleted', request,
+    details: { specialtyId: specialty.id, name: specialty.name },
+  });
+  return specialty;
 }
 
 export async function listServices(filters) {
@@ -113,12 +148,50 @@ export async function listAccounts(role, filters) {
   return adminRepository.listAccounts(role, filters);
 }
 
+export async function listAdmins(filters) {
+  return adminRepository.listAccounts('admin', filters);
+}
+
+export async function createAdmin(payload, actor, request) {
+  const account = await adminRepository.createAccount({ ...payload, role: 'admin' });
+  await recordActivity({
+    actor, targetUserId: account.id, request, eventType: 'admin.created',
+    details: { isSuperAdmin: false },
+  });
+  return account;
+}
+
+export async function updateAdmin(userId, payload, actor, request) {
+  if (actor.id === userId) {
+    throw httpError('You cannot edit your own administrator account here.', 409);
+  }
+  const account = await adminRepository.updateAccount(userId, 'admin', payload);
+  if (!account) throw notFound();
+  await recordActivity({
+    actor, targetUserId: account.id, request, eventType: 'admin.updated',
+    details: { isActive: account.isActive },
+  });
+  return account;
+}
+
+export async function deleteAdmin(userId, actor, request) {
+  if (actor.id === userId) {
+    throw httpError('You cannot delete your own administrator account.', 409);
+  }
+  const deleted = await adminRepository.deleteAccount(userId, 'admin');
+  if (!deleted) throw httpError('The regular admin account was not found.', 404);
+  await recordActivity({
+    actor, request, eventType: 'admin.deleted',
+    details: { userId },
+  });
+  return deleted;
+}
+
 export async function createAccount(role, payload, actor, request) {
   if (role === 'receptionist') await validateReferences({ clinicIds: payload.clinicIds });
   const account = await adminRepository.createAccount({
     ...payload,
     role,
-    passwordHash: await bcrypt.hash(payload.password, 12),
   });
   await recordActivity({
     actor, targetUserId: account.id, request,
@@ -143,6 +216,25 @@ export async function updateAccount(role, userId, payload, actor, request) {
   return account;
 }
 
+export async function getAccount(role, userId) {
+  const account = await adminRepository.getAccount(userId, role);
+  if (!account) throw notFound();
+  return account;
+}
+
+export async function deleteAccount(role, userId, actor, request) {
+  const deleted = await adminRepository.deleteAccount(userId, role);
+  if (!deleted) throw httpError(`The ${role} profile row was not found.`, 404);
+  await recordActivity({
+    actor, eventType: `${role}.deleted`, request,
+    details: {
+      userId,
+      ...(deleted.clinicAssignmentsRemoved ? { clinicAssignmentsRemoved: deleted.clinicAssignmentsRemoved } : {}),
+    },
+  });
+  return deleted;
+}
+
 export async function listAppointments(filters) {
   return adminRepository.listAppointments(filters);
 }
@@ -155,6 +247,10 @@ export async function getAppointment(appointmentId) {
 
 export async function getReports(filters) {
   return adminRepository.getReports(filters);
+}
+
+export async function getReportLookups() {
+  return adminRepository.getReportLookups();
 }
 
 export async function listActivityLogs(filters) {

@@ -213,7 +213,7 @@ export default function PatientFindDoctorPage() {
 
       <div className="mt-8">
         <div className="mb-5 flex items-center justify-between gap-4">
-          <h2 className="text-xl font-semibold text-on-surface sm:text-2xl">Available doctors</h2>
+          <h4 className="text-xl font-semibold text-on-surface sm:text-2xl">Available doctors</h4>
           <div className="rounded-full bg-surface-container px-3 py-1 text-xs font-medium uppercase tracking-[0.18em] text-on-surface-variant">
             {visibleDoctors.length} matches
           </div>

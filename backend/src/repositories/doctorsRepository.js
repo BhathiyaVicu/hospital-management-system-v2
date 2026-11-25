@@ -1,208 +1,176 @@
-import { query } from '../config/database.js';
+import { supabaseAdmin } from '../config/supabase.js';
+import { run, rows, pagedRows, byId, matches, paginate } from './supabaseHelpers.js';
 
-function escapeLike(value) {
-  return value.replace(/[\\%_]/g, '\\$&');
+const doctorColumns = 'id,user_id,clinic_id,primary_specialty_id,professional_title,bio,years_of_experience,consultation_fee,profile_image_url,time_zone,education,languages,approval_status,is_accepting_appointments,created_at,updated_at';
+
+export function localDate(date, timeZone) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function shiftDate(date, days) {
+  const value = new Date(`${date}T00:00:00Z`);
+  value.setUTCDate(value.getUTCDate() + days);
+  return value.toISOString().slice(0, 10);
+}
+
+export function zonedDateTime(date, time, timeZone) {
+  const [year, month, day] = date.split('-').map(Number);
+  const [hour, minute] = time.slice(0, 5).split(':').map(Number);
+  const desired = Date.UTC(year, month - 1, day, hour, minute);
+  let timestamp = desired;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+    }).formatToParts(new Date(timestamp));
+    const values = Object.fromEntries(parts.map((part) => [part.type, Number(part.value)]));
+    const observed = Date.UTC(values.year, values.month - 1, values.day, values.hour, values.minute);
+    timestamp += desired - observed;
+  }
+  return new Date(timestamp);
+}
+
+export function generateSlots(startTime, endTime, duration) {
+  const asMinutes = (value) => {
+    const [hour, minute] = value.slice(0, 5).split(':').map(Number);
+    return hour * 60 + minute;
+  };
+  const start = asMinutes(startTime);
+  const end = asMinutes(endTime);
+  const slots = [];
+  let minute = start;
+  while (duration > 0 && minute + duration <= end) {
+    const format = (value) => `${String(Math.floor(value / 60)).padStart(2, '0')}:${String(value % 60).padStart(2, '0')}`;
+    slots.push({ startTime: format(minute), endTime: format(minute + duration) });
+    minute += duration;
+  }
+  return slots;
+}
+
+function toAvailability(slot, date, timeZone, appointments) {
+  const startAt = zonedDateTime(date, slot.startTime, timeZone);
+  const endAt = zonedDateTime(date, slot.endTime, timeZone);
+  const busy = appointments.some((appointment) => (
+    appointment.status !== 'cancelled'
+    && new Date(appointment.scheduled_start) < endAt
+    && new Date(appointment.scheduled_end) > startAt
+  ));
+  return {
+    date,
+    day: new Intl.DateTimeFormat('en-US', { timeZone, weekday: 'short', month: 'short', day: 'numeric' }).format(startAt),
+    time: new Intl.DateTimeFormat('en-US', { timeZone, hour: '2-digit', minute: '2-digit' }).format(startAt),
+    startAt: startAt.toISOString(),
+    endAt: endAt.toISOString(),
+    available: startAt > new Date() && !busy,
+    id: startAt.toISOString(),
+  };
 }
 
 export async function listDoctors({ search = '', specialty = '', location = '', limit, offset }) {
-  const values = [];
-  const filters = [`d.is_accepting_appointments = TRUE`, `d.approval_status = 'approved'`, `u.is_active = TRUE`, `u.email_verified_at IS NOT NULL`];
-  if (search) {
-    values.push(`%${escapeLike(search)}%`);
-    filters.push(`(u.name ILIKE $${values.length} OR EXISTS (
-      SELECT 1 FROM specialties specialty
-      WHERE specialty.id = d.primary_specialty_id AND specialty.name ILIKE $${values.length}
-    ))`);
-  }
-  if (specialty) {
-    values.push(`%${escapeLike(specialty)}%`);
-    filters.push(`EXISTS (
-      SELECT 1 FROM specialties specialty
-      WHERE specialty.id = d.primary_specialty_id
-        AND (specialty.name ILIKE $${values.length} OR specialty.slug ILIKE $${values.length})
-    )`);
-  }
-  if (location) {
-    values.push(`%${escapeLike(location)}%`);
-    filters.push(`(clinic.city ILIKE $${values.length} OR clinic.name ILIKE $${values.length})`);
-  }
-  const whereClause = filters.join(' AND ');
-  const count = await query(
-    `SELECT count(*)::int AS total
-     FROM doctors d JOIN users u ON u.id = d.user_id
-     LEFT JOIN clinics clinic ON clinic.id = d.clinic_id
-     WHERE ${whereClause}`,
-    values,
-  );
-  const pageValues = [...values, limit, offset];
-  const results = await query(
-    `SELECT d.id, u.name, d.professional_title AS title, d.bio, d.years_of_experience,
-            d.consultation_fee, d.currency, d.profile_image_url AS image,
-            clinic.name AS clinic, clinic.city AS location,
-            d.rating, d.review_count AS reviews,
-            COALESCE(json_agg(DISTINCT jsonb_build_object('name', s.name, 'slug', s.slug))
-              FILTER (WHERE s.id IS NOT NULL), '[]') AS specialties
-     FROM doctors d
-     JOIN users u ON u.id = d.user_id
-     LEFT JOIN clinics clinic ON clinic.id = d.clinic_id
-     LEFT JOIN specialties s ON s.id = d.primary_specialty_id
-     WHERE ${whereClause}
-     GROUP BY d.id, u.id, clinic.id
-     ORDER BY d.rating DESC, u.name ASC
-     LIMIT $${pageValues.length - 1} OFFSET $${pageValues.length}`,
-    pageValues,
-  );
-  return { doctors: results.rows, total: count.rows[0].total };
+  const [doctors, users, clinics, specialties] = await Promise.all([
+    rows('doctors', doctorColumns), rows('users'), rows('clinics'), rows('specialties'),
+  ]);
+  const userMap = byId(users);
+  const clinicMap = byId(clinics);
+  const specialtyMap = byId(specialties);
+  const all = doctors.flatMap((doctor) => {
+    const user = userMap.get(doctor.user_id);
+    if (!user || !doctor.is_accepting_appointments || doctor.approval_status !== 'approved'
+      || !user.is_active || !user.email_verified_at) return [];
+    const clinic = clinicMap.get(doctor.clinic_id);
+    const specialtyRow = specialtyMap.get(doctor.primary_specialty_id);
+    if (search && !matches(user.name, search) && !matches(specialtyRow?.name, search)) return [];
+    if (specialty && !matches(specialtyRow?.name, specialty) && !matches(specialtyRow?.slug, specialty)) return [];
+    if (location && !matches(clinic?.city, location) && !matches(clinic?.name, location)) return [];
+    return [{
+      id: doctor.id, name: user.name, title: doctor.professional_title, bio: doctor.bio,
+      years_of_experience: doctor.years_of_experience, consultation_fee: doctor.consultation_fee,
+      image: doctor.profile_image_url, clinic: clinic?.name || null,
+      location: clinic?.city || null,
+      specialties: specialtyRow ? [{ name: specialtyRow.name, slug: specialtyRow.slug }] : [],
+    }];
+  }).sort((a, b) => a.name.localeCompare(b.name));
+  return { doctors: paginate(all, limit, offset), total: all.length };
 }
 
 export async function getDoctorById(doctorId) {
-  const result = await query(
-    `SELECT d.id, u.name, d.professional_title AS title, d.bio, d.years_of_experience,
-            d.consultation_fee, d.currency, d.profile_image_url AS image,
-            clinic.name AS clinic, clinic.city AS location,
-            d.rating, d.review_count AS reviews, d.time_zone, d.education, d.languages,
-            COALESCE(array_agg(DISTINCT s.name) FILTER (WHERE s.id IS NOT NULL), '{}') AS specialties
-     FROM doctors d
-     JOIN users u ON u.id = d.user_id
-     LEFT JOIN clinics clinic ON clinic.id = d.clinic_id
-     LEFT JOIN specialties s ON s.id = d.primary_specialty_id
-     WHERE d.id = $1 AND d.is_accepting_appointments = TRUE
-       AND d.approval_status = 'approved' AND u.is_active = TRUE AND u.email_verified_at IS NOT NULL
-     GROUP BY d.id, u.id, clinic.id`,
-    [doctorId],
-  );
-  return result.rows[0] || null;
+  const [doctor, users, clinics, specialties] = await Promise.all([
+    (async () => {
+      const { data } = await run(supabaseAdmin.from('doctors').select(doctorColumns).eq('id', doctorId).maybeSingle());
+      return data;
+    })(),
+    rows('users'), rows('clinics'), rows('specialties'),
+  ]);
+  if (!doctor) return null;
+  const user = byId(users).get(doctor.user_id);
+  if (!user?.is_active || !user.email_verified_at || !doctor.is_accepting_appointments || doctor.approval_status !== 'approved') return null;
+  const clinic = byId(clinics).get(doctor.clinic_id);
+  const specialty = byId(specialties).get(doctor.primary_specialty_id);
+  return {
+    id: doctor.id, name: user.name, title: doctor.professional_title, bio: doctor.bio,
+    years_of_experience: doctor.years_of_experience, consultation_fee: doctor.consultation_fee,
+    image: doctor.profile_image_url, clinic: clinic?.name || null,
+    location: clinic?.city || null,
+    time_zone: doctor.time_zone, education: doctor.education, languages: doctor.languages,
+    specialties: specialty ? [specialty.name] : [],
+  };
 }
 
 export async function listSpecialties() {
-  const result = await query(
-    `SELECT s.id, s.name, s.slug, s.description, count(d.id)::int AS "doctorCount"
-     FROM specialties s
-     LEFT JOIN doctors d ON d.primary_specialty_id = s.id
-       AND d.approval_status = 'approved' AND d.is_accepting_appointments = TRUE
-     GROUP BY s.id
-     ORDER BY s.name`,
-  );
-  return result.rows;
+  const [specialties, doctors] = await Promise.all([rows('specialties'), rows('doctors', doctorColumns)]);
+  return specialties.map((specialty) => ({
+    id: specialty.id, name: specialty.name, slug: specialty.slug, description: specialty.description,
+    doctorCount: doctors.filter((doctor) => doctor.primary_specialty_id === specialty.id
+      && doctor.approval_status === 'approved' && doctor.is_accepting_appointments).length,
+  })).sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export async function listClinics() {
-  const result = await query(
-    `SELECT id, name, city, address, phone
-     FROM clinics WHERE is_active = TRUE ORDER BY name`,
-  );
-  return result.rows;
+  return (await rows('clinics')).filter((clinic) => clinic.is_active)
+    .map(({ id, name, city, address, phone }) => ({ id, name, city, address, phone }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export async function getAvailabilitySlots(doctorId, executeQuery = query) {
-  const result = await executeQuery(
-    `WITH doctor_info AS (
-       SELECT d.id, d.time_zone
-       FROM doctors d JOIN users u ON u.id = d.user_id
-       WHERE d.id = $1 AND d.approval_status = 'approved'
-         AND d.is_accepting_appointments = TRUE AND u.is_active = TRUE
-     ),
-     days AS (
-       SELECT di.id, di.time_zone,
-              ((now() AT TIME ZONE di.time_zone)::date + series.day_offset)::date AS local_date
-       FROM doctor_info di
-       CROSS JOIN generate_series(0, 59) AS series(day_offset)
-     ),
-     date_schedules AS (
-       SELECT doctor_id, available_on
-       FROM doctor_availability_date_schedules
-       WHERE doctor_id = $1 AND available_on >= (SELECT min(local_date) FROM days)
-         AND available_on <= (SELECT max(local_date) FROM days)
-     ),
-     regular_slots AS (
-       SELECT days.id AS doctor_id, days.time_zone,
-              (slot.local_start AT TIME ZONE days.time_zone) AS starts_at,
-              ((slot.local_start + availability.slot_duration_minutes * interval '1 minute')
-                AT TIME ZONE days.time_zone) AS ends_at
-       FROM days
-       JOIN doctor_availability availability
-         ON availability.doctor_id = days.id
-        AND availability.is_available = TRUE
-        AND availability.day_of_week = EXTRACT(DOW FROM days.local_date)
-       CROSS JOIN LATERAL generate_series(
-         days.local_date + availability.start_time,
-         days.local_date + availability.end_time
-           - availability.slot_duration_minutes * interval '1 minute',
-         availability.slot_duration_minutes * interval '1 minute'
-       ) AS slot(local_start)
-       WHERE NOT EXISTS (
-         SELECT 1 FROM doctor_availability_exceptions exception
-         WHERE exception.doctor_id = days.id AND exception.available_on = days.local_date
-       )
-       AND NOT EXISTS (
-         SELECT 1 FROM date_schedules date_schedule
-         WHERE date_schedule.doctor_id = days.id AND date_schedule.available_on = days.local_date
-       )
-     ),
-     exception_slots AS (
-       SELECT days.id AS doctor_id, days.time_zone,
-              (slot.local_start AT TIME ZONE days.time_zone) AS starts_at,
-              ((slot.local_start + exception.slot_duration_minutes * interval '1 minute')
-                AT TIME ZONE days.time_zone) AS ends_at
-       FROM days
-       JOIN (
-         SELECT DISTINCT ON (doctor_id, available_on) *
-         FROM doctor_availability_exceptions
-         ORDER BY doctor_id, available_on, created_at DESC, id DESC
-       ) exception
-         ON exception.doctor_id = days.id
-        AND exception.available_on = days.local_date
-        AND exception.is_available = TRUE
-       CROSS JOIN LATERAL generate_series(
-          days.local_date + exception.start_time,
-          days.local_date + exception.end_time
-            - COALESCE(exception.slot_duration_minutes, 30) * interval '1 minute',
-          COALESCE(exception.slot_duration_minutes, 30) * interval '1 minute'
-       ) AS slot(local_start)
-       WHERE NOT EXISTS (
-          SELECT 1 FROM date_schedules date_schedule
-          WHERE date_schedule.doctor_id = days.id AND date_schedule.available_on = days.local_date
-       )
-     ),
-     explicit_slots AS (
-       SELECT days.id AS doctor_id, days.time_zone,
-              ((days.local_date + date_slot.start_time) AT TIME ZONE days.time_zone) AS starts_at,
-              ((days.local_date + date_slot.end_time) AT TIME ZONE days.time_zone) AS ends_at
-       FROM days
-       JOIN date_schedules date_schedule
-         ON date_schedule.doctor_id = days.id AND date_schedule.available_on = days.local_date
-       JOIN doctor_availability_date_slots date_slot
-         ON date_slot.doctor_id = date_schedule.doctor_id
-        AND date_slot.available_on = date_schedule.available_on
-        AND date_slot.is_available = TRUE
-     ),
-     all_slots AS (
-       SELECT * FROM regular_slots
-       UNION ALL
-       SELECT * FROM exception_slots
-       UNION ALL
-       SELECT * FROM explicit_slots
-     )
-     SELECT DISTINCT to_char(all_slots.starts_at AT TIME ZONE all_slots.time_zone, 'YYYY-MM-DD') AS date,
-            to_char(all_slots.starts_at AT TIME ZONE all_slots.time_zone, 'Dy, Mon FMDD') AS day,
-            to_char(all_slots.starts_at AT TIME ZONE all_slots.time_zone, 'HH12:MI AM') AS time,
-            all_slots.starts_at AS "startAt",
-            all_slots.ends_at AS "endAt",
-            TRUE AS available
-     FROM all_slots
-     WHERE all_slots.starts_at > now()
-       AND NOT EXISTS (
-         SELECT 1 FROM appointments appointment
-         WHERE appointment.doctor_id = all_slots.doctor_id
-           AND appointment.status <> 'cancelled'
-           AND appointment.scheduled_start < all_slots.ends_at
-           AND appointment.scheduled_end > all_slots.starts_at
-       )
-     ORDER BY "startAt"`,
-    [doctorId],
-  );
-  return result.rows.map((slot) => ({
-    ...slot,
-    id: new Date(slot.startAt).toISOString(),
-  }));
+export async function getAvailabilitySlots(doctorId) {
+  const [doctorResponse, weekly, exceptions, schedules, dateSlots, appointments] = await Promise.all([
+    run(supabaseAdmin.from('doctors').select('id,time_zone,approval_status,is_accepting_appointments,user_id').eq('id', doctorId).maybeSingle()),
+    rows('doctor_availability'), rows('doctor_availability_exceptions'),
+    rows('doctor_availability_date_schedules'), rows('doctor_availability_date_slots'),
+    pagedRows(() => supabaseAdmin.from('appointments').select('*').eq('doctor_id', doctorId)),
+  ]);
+  const doctor = doctorResponse.data;
+  const doctorAppointments = appointments || [];
+  if (!doctor || doctor.approval_status !== 'approved' || !doctor.is_accepting_appointments) return [];
+  const account = await run(supabaseAdmin.from('users').select('is_active').eq('id', doctor.user_id).maybeSingle());
+  if (!account.data?.is_active) return [];
+
+  const now = new Date();
+  const today = localDate(now, doctor.time_zone || 'UTC');
+  const output = [];
+  let offset = 0;
+  while (offset < 60) {
+    const date = shiftDate(today, offset);
+    const dayOfWeek = new Date(`${date}T00:00:00Z`).getUTCDay();
+    const explicit = schedules.find((item) => item.doctor_id === doctorId && item.available_on === date);
+    const dayException = exceptions.filter((item) => item.doctor_id === doctorId && item.available_on === date)
+      .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))[0];
+    let localSlots = [];
+    if (explicit) {
+      localSlots = dateSlots.filter((item) => item.doctor_id === doctorId && item.available_on === date && item.is_available)
+        .map((item) => ({ startTime: item.start_time, endTime: item.end_time }));
+    } else if (dayException) {
+      if (dayException.is_available) localSlots = generateSlots(dayException.start_time, dayException.end_time, dayException.slot_duration_minutes || 30);
+    } else {
+      localSlots = weekly.filter((item) => item.doctor_id === doctorId && item.day_of_week === dayOfWeek && item.is_available)
+        .flatMap((item) => generateSlots(item.start_time, item.end_time, item.slot_duration_minutes));
+    }
+    const dayAppointments = doctorAppointments.filter((item) => localDate(new Date(item.scheduled_start), doctor.time_zone || 'UTC') === date);
+    for (const slot of localSlots) output.push(toAvailability(slot, date, doctor.time_zone || 'UTC', dayAppointments));
+    offset += 1;
+  }
+  return output.filter((slot) => slot.available).sort((a, b) => a.startAt.localeCompare(b.startAt));
 }

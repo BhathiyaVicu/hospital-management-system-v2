@@ -11,7 +11,7 @@ function homeForRole(role) {
   return '/';
 }
 
-export default function RequireAuth({ roles, children }) {
+export default function RequireAuth({ roles, requireSuperAdmin = false, children }) {
   const location = useLocation();
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -49,8 +49,14 @@ export default function RequireAuth({ roles, children }) {
   if (!roles.includes(user.role)) {
     return <Navigate to={homeForRole(user.role)} replace />;
   }
-  if (user.mustChangePassword && location.pathname !== '/change-password') {
-    return <Navigate to="/change-password" replace />;
+  if (requireSuperAdmin && !user.isSuperAdmin) {
+    return <Navigate to="/admin/dashboard" replace />;
+  }
+  if (user.mustChangePassword && !['/first-login', '/change-password'].includes(location.pathname)) {
+    return <Navigate to="/first-login" replace />;
+  }
+  if (!user.mustChangePassword && location.pathname === '/first-login') {
+    return <Navigate to={homeForRole(user.role)} replace />;
   }
   return children;
 }

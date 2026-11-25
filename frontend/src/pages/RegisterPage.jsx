@@ -73,7 +73,10 @@ export default function RegisterPage() {
         password: form.password,
       };
       await registerUser(payload);
-      navigate(`/verify-email?email=${encodeURIComponent(form.email.trim().toLowerCase())}`);
+      navigate('/login', {
+        replace: true,
+        state: { message: 'Registration successful! Please check your email. Click the link to verify and be logged in automatically.' },
+      });
     } catch (error) {
       setMessage(error.message || 'Registration failed.');
     } finally {

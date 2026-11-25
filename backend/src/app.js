@@ -1,12 +1,10 @@
 import express from 'express';
 import cors from 'cors';
-import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
-import { pool } from './config/database.js';
+import { supabaseAdmin } from './config/supabase.js';
 import { corsOptions } from './config/cors.js';
 import { getEnv } from './config/env.js';
-import { verifyCsrf } from './middleware/csrf.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import appointmentRoutes from './routes/appointmentRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
@@ -19,14 +17,14 @@ import receptionistRoutes from './routes/receptionistRoutes.js';
 import specialtyRoutes from './routes/specialtyRoutes.js';
 import staffSupportRoutes from './routes/staffSupportRoutes.js';
 import supportRoutes from './routes/supportRoutes.js';
+import notificationRoutes from './routes/notificationRoutes.js';
 
-export function createApp({ env = getEnv(), healthCheck = () => pool.query('SELECT 1') } = {}) {
+export function createApp({ env = getEnv(), healthCheck = () => supabaseAdmin.from('users').select('id').limit(1) } = {}) {
   const app = express();
   app.disable('x-powered-by');
   app.use(helmet());
   app.use(cors(corsOptions(env)));
   app.use(express.json({ limit: '32kb' }));
-  app.use(cookieParser());
   app.use((req, res, next) => {
     req.env = env;
     next();
@@ -34,16 +32,12 @@ export function createApp({ env = getEnv(), healthCheck = () => pool.query('SELE
 
   app.get('/api/health', async (req, res) => {
     try {
-      await healthCheck();
+      const result = await healthCheck();
+      if (result?.error) throw result.error;
       return res.json({ status: 'ok', database: 'connected' });
     } catch {
       return res.status(503).json({ status: 'error', database: 'unavailable' });
     }
-  });
-
-  app.use('/api', (req, res, next) => {
-    if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
-    return verifyCsrf(req, res, next);
   });
 
   app.use('/api/auth', authRoutes);
@@ -56,6 +50,7 @@ export function createApp({ env = getEnv(), healthCheck = () => pool.query('SELE
   app.use('/api/clinics', clinicRoutes);
   app.use('/api/support', supportRoutes);
   app.use('/api/staff/support', staffSupportRoutes);
+  app.use('/api/notifications', notificationRoutes);
   app.use(
     '/api/appointments',
     rateLimit({

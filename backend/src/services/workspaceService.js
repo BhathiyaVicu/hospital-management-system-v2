@@ -4,6 +4,9 @@ import * as doctorRepository from '../repositories/doctorWorkspaceRepository.js'
 import * as receptionistRepository from '../repositories/receptionistRepository.js';
 import * as scheduleRepository from '../repositories/adminScheduleRepository.js';
 import { recordActivity } from './auditService.js';
+import {
+  notifyAppointmentBooked, notifyAppointmentCancelled, notifyAppointmentRescheduled,
+} from './appointmentNotifications.js';
 
 function httpError(message, status) {
   const error = new Error(message);
@@ -311,6 +314,7 @@ export async function bookReceptionistAppointment(user, values, request) {
     clinicIds,
   });
   if (result.unavailable) throw httpError('The patient, clinic, doctor, or selected time is no longer available.', 409);
+  await notifyAppointmentBooked(result.appointment);
   await recordActivity({
     actor: { id: user.id, role: user.role },
     targetUserId: values.patientId,
@@ -318,7 +322,9 @@ export async function bookReceptionistAppointment(user, values, request) {
     request,
     details: { appointmentId: result.appointment.id, clinicId: values.clinicId, doctorId: values.doctorId },
   });
-  return result.appointment;
+  const appointment = { ...result.appointment };
+  delete appointment.doctor_user_id;
+  return appointment;
 }
 
 export async function rescheduleReceptionistAppointment(user, appointmentId, scheduledStart, request) {
@@ -329,13 +335,16 @@ export async function rescheduleReceptionistAppointment(user, appointmentId, sch
     allowedClinicIds: await assignedClinicIds(user.id),
   });
   if (result.unavailable) throw httpError('The appointment cannot be rescheduled to that time.', 409);
+  await notifyAppointmentRescheduled(result.appointment);
   await recordActivity({
     actor: { id: user.id, role: user.role },
     eventType: 'receptionist.appointment.rescheduled',
     request,
     details: { appointmentId },
   });
-  return result.appointment;
+  const appointment = { ...result.appointment };
+  delete appointment.doctor_user_id;
+  return appointment;
 }
 
 export async function cancelReceptionistAppointment(user, appointmentId, request) {
@@ -345,13 +354,16 @@ export async function cancelReceptionistAppointment(user, appointmentId, request
     await assignedClinicIds(user.id),
   );
   if (!result) throw httpError('Appointment not found or it can no longer be cancelled.', 409);
+  await notifyAppointmentCancelled(result);
   await recordActivity({
     actor: { id: user.id, role: user.role },
     eventType: 'receptionist.appointment.cancelled',
     request,
     details: { appointmentId },
   });
-  return result;
+  const appointment = { ...result };
+  delete appointment.doctor_user_id;
+  return appointment;
 }
 
 export async function updateReceptionistWorkflow(user, appointmentId, workflowStatus, request) {

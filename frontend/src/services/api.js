@@ -1,8 +1,97 @@
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000/api';
+const ACCESS_TOKEN_KEY = 'mediconnect_access_token';
+const REFRESH_TOKEN_KEY = 'mediconnect_refresh_token';
+let refreshPromise = null;
+let refreshTimer = null;
+
+export function getAccessToken() {
+  const token = localStorage.getItem(ACCESS_TOKEN_KEY);
+  if (token && !refreshTimer) scheduleSessionRefresh(token);
+  return token;
+}
+
+export function getRefreshToken() {
+  return localStorage.getItem(REFRESH_TOKEN_KEY);
+}
+
+function tokenExpiry(token) {
+  try {
+    const encoded = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    const padded = encoded.padEnd(Math.ceil(encoded.length / 4) * 4, '=');
+    const payload = JSON.parse(atob(padded));
+    return Number.isFinite(payload.exp) ? payload.exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+function scheduleSessionRefresh(token) {
+  if (refreshTimer) clearTimeout(refreshTimer);
+  if (!getRefreshToken()) {
+    refreshTimer = null;
+    return;
+  }
+  const expiresAt = tokenExpiry(token);
+  if (!expiresAt) return;
+  const delay = Math.max(1000, expiresAt - Date.now() - 60_000);
+  refreshTimer = setTimeout(() => {
+    refreshTimer = null;
+    refreshAuthSession().catch((error) => {
+      if (error.status === 401) {
+        window.dispatchEvent(new CustomEvent('auth:session-expired'));
+      } else {
+        console.error('Unable to refresh the Supabase session:', error);
+      }
+    });
+  }, delay);
+}
+
+export function setAccessToken(token, refreshToken) {
+  if (token) {
+    localStorage.setItem(ACCESS_TOKEN_KEY, token);
+    if (refreshToken) localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+    scheduleSessionRefresh(token);
+  } else {
+    localStorage.removeItem(ACCESS_TOKEN_KEY);
+    localStorage.removeItem(REFRESH_TOKEN_KEY);
+    if (refreshTimer) clearTimeout(refreshTimer);
+    refreshTimer = null;
+  }
+}
 
 async function readPayload(response) {
   const contentType = response.headers.get('content-type') || '';
   return contentType.includes('application/json') ? response.json() : response.text();
+}
+
+export async function refreshAuthSession() {
+  if (refreshPromise) return refreshPromise;
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) return null;
+
+  refreshPromise = (async () => {
+    const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refreshToken }),
+    });
+    const payload = await readPayload(response);
+    if (!response.ok || !payload?.token || !payload?.refreshToken) {
+      const error = new Error(typeof payload === 'string' ? payload : payload?.message || 'Session refresh failed.');
+      error.status = response.status;
+      if (response.status === 400 || response.status === 401) setAccessToken(null);
+      throw error;
+    }
+    setAccessToken(payload.token, payload.refreshToken);
+    window.dispatchEvent(new CustomEvent('auth:session-changed'));
+    return payload.token;
+  })();
+
+  try {
+    return await refreshPromise;
+  } finally {
+    refreshPromise = null;
+  }
 }
 
 async function request(endpoint, options = {}) {
@@ -12,23 +101,46 @@ async function request(endpoint, options = {}) {
     ...(options.headers || {}),
   };
 
-  if (!['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase())) {
-    const csrfResponse = await fetch(`${API_BASE_URL}/auth/csrf`, { credentials: 'include' });
-    const csrfPayload = await readPayload(csrfResponse);
-    if (!csrfResponse.ok) {
-      throw new Error(typeof csrfPayload === 'string' ? csrfPayload : csrfPayload?.message || 'Unable to initialize request security.');
+  let token = getAccessToken();
+  const authPublicEndpoint = ['/auth/login', '/auth/refresh'].includes(endpoint);
+  const expiresAt = token ? tokenExpiry(token) : null;
+  if (token && !authPublicEndpoint && expiresAt && expiresAt <= Date.now() + 60_000 && getRefreshToken()) {
+    try {
+      token = await refreshAuthSession();
+    } catch (error) {
+      if (error.status === 401 && endpoint !== '/auth/me') {
+        window.dispatchEvent(new CustomEvent('auth:session-expired'));
+      }
+      throw error;
     }
-    headers['X-CSRF-Token'] = csrfPayload.csrfToken;
   }
+  if (token) headers.Authorization = `Bearer ${token}`;
 
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+  const sendRequest = (accessToken) => fetch(`${API_BASE_URL}${endpoint}`, {
     ...options,
     method,
-    headers,
-    credentials: 'include',
+    headers: {
+      ...headers,
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+    },
   });
-  if (response.status === 401 && !['/auth/login', '/auth/me'].includes(endpoint)) {
-    window.dispatchEvent(new CustomEvent('auth:session-expired'));
+  let response = await sendRequest(token);
+  if (response.status === 401 && !authPublicEndpoint && getRefreshToken()) {
+    try {
+      token = await refreshAuthSession();
+      response = await sendRequest(token);
+    } catch (error) {
+      if (error.status === 401 && endpoint !== '/auth/me') {
+        window.dispatchEvent(new CustomEvent('auth:session-expired'));
+      }
+      throw error;
+    }
+  }
+  if (response.status === 401) {
+    setAccessToken(null);
+    if (!['/auth/login', '/auth/me'].includes(endpoint)) {
+      window.dispatchEvent(new CustomEvent('auth:session-expired'));
+    }
   }
   const payload = await readPayload(response);
 
@@ -71,11 +183,22 @@ export function registerUser(payload) {
 }
 
 export function loginUser(payload) {
-  return request('/auth/login', { method: 'POST', body: JSON.stringify(payload) });
+  return request('/auth/login', { method: 'POST', body: JSON.stringify(payload) }).then((result) => {
+    const token = result.token || result.access_token;
+    if (!token || !result.refreshToken) throw new Error('Authentication response did not include a complete Supabase session.');
+    setAccessToken(token, result.refreshToken);
+    window.dispatchEvent(new CustomEvent('auth:session-changed'));
+    return result;
+  });
 }
 
-export function logoutUser() {
-  return request('/auth/logout', { method: 'POST' });
+export async function logoutUser() {
+  try {
+    return await request('/auth/logout', { method: 'POST' });
+  } finally {
+    setAccessToken(null);
+    window.dispatchEvent(new CustomEvent('auth:session-changed'));
+  }
 }
 
 export function getCurrentUser() {
@@ -84,6 +207,10 @@ export function getCurrentUser() {
 
 export function changePassword(payload) {
   return request('/auth/change-password', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export function completeFirstLogin() {
+  return request('/auth/complete-first-login', { method: 'POST' });
 }
 
 export function getAdminDashboard() {
@@ -115,6 +242,9 @@ export function createAdminDoctor(payload) {
 export function updateAdminDoctor(id, payload) {
   return request(`/admin/doctors/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(payload) });
 }
+export function deleteAdminDoctor(id) {
+  return request(`/admin/doctors/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
 export function getAdminClinics(filters) { return adminList('clinics', filters); }
 export function createAdminClinic(payload) {
   return request('/admin/clinics', { method: 'POST', body: JSON.stringify(payload) });
@@ -122,30 +252,52 @@ export function createAdminClinic(payload) {
 export function updateAdminClinic(id, payload) {
   return request(`/admin/clinics/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(payload) });
 }
-export function getAdminServices(filters) { return adminList('services', filters); }
-export function createAdminService(payload) {
-  return request('/admin/services', { method: 'POST', body: JSON.stringify(payload) });
-}
-export function updateAdminService(id, payload) {
-  return request(`/admin/services/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(payload) });
-}
 export function getAdminStaff(filters) { return adminList('staff', filters); }
+export function getAdminStaffDetail(id) { return request(`/admin/staff/${encodeURIComponent(id)}`); }
 export function createAdminStaff(payload) {
   return request('/admin/staff', { method: 'POST', body: JSON.stringify(payload) });
 }
 export function updateAdminStaff(id, payload) {
   return request(`/admin/staff/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(payload) });
 }
+export function deleteAdminStaff(id) {
+  return request(`/admin/staff/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+export function getAdminAdmins(filters) { return adminList('admins', filters); }
+export function createAdminAdmin(payload) {
+  return request('/admin/admins', { method: 'POST', body: JSON.stringify(payload) });
+}
+export function updateAdminAdmin(id, payload) {
+  return request(`/admin/admins/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(payload) });
+}
+export function deleteAdminAdmin(id) {
+  return request(`/admin/admins/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
 export function getAdminReceptionists(filters) { return adminList('receptionists', filters); }
+export function getAdminReceptionistDetail(id) { return request(`/admin/receptionists/${encodeURIComponent(id)}`); }
 export function createAdminReceptionist(payload) {
   return request('/admin/receptionists', { method: 'POST', body: JSON.stringify(payload) });
 }
 export function updateAdminReceptionist(id, payload) {
   return request(`/admin/receptionists/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(payload) });
 }
+export function deleteAdminReceptionist(id) {
+  return request(`/admin/receptionists/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+export function getAdminSpecialties(filters) { return adminList('specialties', filters); }
+export function createAdminSpecialty(payload) {
+  return request('/admin/specialties', { method: 'POST', body: JSON.stringify(payload) });
+}
+export function updateAdminSpecialty(id, payload) {
+  return request(`/admin/specialties/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(payload) });
+}
+export function deleteAdminSpecialty(id) {
+  return request(`/admin/specialties/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
 export function getAdminAppointments(filters) { return adminList('appointments', filters); }
 export function getAdminAppointment(id) { return request(`/admin/appointments/${encodeURIComponent(id)}`); }
 export function getAdminReports(filters) { return adminList('reports', filters); }
+export function getAdminReportLookups() { return request('/admin/reports/lookups'); }
 export function getAdminActivityLogs(filters) { return adminList('activity-logs', filters); }
 export function getAdminSupportTickets(filters) { return adminList('support/tickets', filters); }
 export function getAdminSupportTicket(id) { return request(`/admin/support/tickets/${encodeURIComponent(id)}`); }
@@ -161,6 +313,16 @@ export function assignAdminSupportTicket(id, assignedStaffId) {
 }
 export function getAdminScheduleDoctors() { return request('/admin/schedules/doctors'); }
 export function getAdminSchedules(filters = {}) { return adminList('schedules', filters); }
+export function getAdminDoctorCalendar(doctorId, filters = {}) {
+  const params = new URLSearchParams({ ...filters, doctorId });
+  return request(`/admin/schedules/calendar?${params.toString()}`);
+}
+export function saveAdminDoctorDateSchedule(doctorId, date, payload) {
+  return request(`/admin/schedules/dates/${encodeURIComponent(date)}?doctorId=${encodeURIComponent(doctorId)}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
 export function createAdminWeeklySchedule(payload) {
   return request('/admin/schedules/weekly', { method: 'POST', body: JSON.stringify(payload) });
 }
@@ -280,24 +442,32 @@ export function forgotPassword(payload) {
   return request('/auth/forgot-password', { method: 'POST', body: JSON.stringify(payload) });
 }
 
-export function verifyResetCode(payload) {
-  return request('/auth/verify-reset-code', { method: 'POST', body: JSON.stringify(payload) });
-}
-
-export function resendResetCode(payload) {
-  return request('/auth/resend-reset-code', { method: 'POST', body: JSON.stringify(payload) });
-}
-
 export function resetPassword(payload) {
   return request('/auth/reset-password', { method: 'POST', body: JSON.stringify(payload) });
 }
 
 export function verifyEmail(payload) {
+  if (payload.accessToken) {
+    setAccessToken(payload.accessToken);
+    window.dispatchEvent(new CustomEvent('auth:session-changed'));
+  }
   return request('/auth/verify-email', { method: 'POST', body: JSON.stringify(payload) });
 }
 
 export function resendVerification(payload) {
   return request('/auth/resend-verification', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export function getNotifications() {
+  return request('/notifications');
+}
+
+export function markNotificationRead(id) {
+  return request(`/notifications/${encodeURIComponent(id)}/read`, { method: 'PATCH' });
+}
+
+export function markAllNotificationsRead() {
+  return request('/notifications/read-all', { method: 'PATCH' });
 }
 
 export function getAvailability(doctorId) {
@@ -395,12 +565,12 @@ export default {
   loginUser,
   logoutUser,
   getCurrentUser,
+  getNotifications,
+  markNotificationRead,
   getPatientProfile,
   updatePatientProfile,
   getPatientDashboard,
   forgotPassword,
-  verifyResetCode,
-  resendResetCode,
   resetPassword,
   verifyEmail,
   resendVerification,

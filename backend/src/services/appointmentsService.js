@@ -1,4 +1,7 @@
 import * as appointmentsRepository from '../repositories/appointmentsRepository.js';
+import {
+  notifyAppointmentBooked, notifyAppointmentCancelled, notifyAppointmentRescheduled,
+} from './appointmentNotifications.js';
 
 export async function bookAppointment(patientId, payload, userId) {
   if (!patientId) {
@@ -18,7 +21,10 @@ export async function bookAppointment(patientId, payload, userId) {
     error.status = 409;
     throw error;
   }
-  return result.appointment;
+  await notifyAppointmentBooked(result.appointment);
+  const appointment = { ...result.appointment };
+  delete appointment.doctor_user_id;
+  return appointment;
 }
 
 export async function listAppointments(patientId, filters) {
@@ -57,7 +63,10 @@ export async function cancelAppointment(patientId, appointmentId, userId) {
     error.status = 409;
     throw error;
   }
-  return appointment;
+  await notifyAppointmentCancelled(appointment);
+  const cancelledAppointment = { ...appointment };
+  delete cancelledAppointment.doctor_user_id;
+  return cancelledAppointment;
 }
 
 export async function rescheduleAppointment(patientId, appointmentId, scheduledStart, userId) {
@@ -72,5 +81,8 @@ export async function rescheduleAppointment(patientId, appointmentId, scheduledS
     error.status = 409;
     throw error;
   }
-  return result.appointment;
+  await notifyAppointmentRescheduled(result.appointment);
+  const appointment = { ...result.appointment };
+  delete appointment.doctor_user_id;
+  return appointment;
 }
