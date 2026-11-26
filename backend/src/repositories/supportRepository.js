@@ -100,21 +100,35 @@ export async function getStaffTicket(ticketId) {
 
 export async function addTicketMessage({ ticketId, userId, role, patientId, message }) {
   const { data: ticket } = await run(supabaseAdmin.from('support_tickets').select('*').eq('id', ticketId).maybeSingle());
+  
   if (!ticket || (role === 'patient' && ticket.patient_id !== patientId)) return null;
+  
+  // Check if closed or invalid status
   if (ticket.status === 'closed' || (role === 'patient' && !['open', 'in_progress', 'waiting_for_patient', 'resolved'].includes(ticket.status))
     || (role === 'staff' && ticket.status === 'resolved')) return { closed: true };
+
+  // Auto-assign if staff replies to an unassigned ticket
+  if (role === 'staff' && !ticket.assigned_staff_id) {
+    await run(supabaseAdmin.from('support_tickets').update({ assigned_staff_id: userId }).eq('id', ticketId));
+    ticket.assigned_staff_id = userId; // update local object to reflect the change
+  }
+
   const { data: createdMessage } = await run(supabaseAdmin.from('support_ticket_messages').insert({
     ticket_id: ticketId, sender_user_id: userId, message,
   }).select('id').single());
+  
   let nextStatus = ticket.status;
   if (role === 'patient' && ['waiting_for_patient', 'resolved'].includes(ticket.status)) nextStatus = 'in_progress';
   else if (role === 'staff') nextStatus = 'waiting_for_patient';
+  
   const updatedFields = { updated_at: new Date().toISOString() };
   if (nextStatus !== ticket.status) updatedFields.status = nextStatus;
   if (role === 'patient' && nextStatus === 'in_progress') updatedFields.resolved_at = null;
+  
   await run(supabaseAdmin.from('support_tickets').update(updatedFields).eq('id', ticketId));
   const updated = { ...ticket, ...updatedFields };
   const full = await ticketView(updated, true, true);
+  
   return {
     ticket: full, messageId: createdMessage.id,
     patientUserId: full.patientUserId, assignedStaffId: full.assignedStaffId,
