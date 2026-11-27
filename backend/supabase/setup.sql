@@ -349,6 +349,37 @@ ALTER TABLE public.notifications
 CREATE UNIQUE INDEX IF NOT EXISTS notifications_user_dedupe_key_idx
   ON public.notifications (user_id, dedupe_key);
 
+DELETE FROM public.notifications AS notification
+USING public.users AS account
+WHERE notification.user_id = account.id
+  AND account.role NOT IN ('patient', 'doctor', 'staff');
+
+CREATE OR REPLACE FUNCTION public.enforce_notification_recipient_role()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  recipient_role TEXT;
+BEGIN
+  SELECT role INTO recipient_role
+  FROM public.users
+  WHERE id = NEW.user_id;
+
+  IF recipient_role IS NULL OR recipient_role NOT IN ('patient', 'doctor', 'staff') THEN
+    RAISE EXCEPTION 'Notifications are only available to patient, doctor, and staff accounts.'
+      USING ERRCODE = 'check_violation';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS notifications_recipient_role_check ON public.notifications;
+CREATE TRIGGER notifications_recipient_role_check
+  BEFORE INSERT OR UPDATE OF user_id ON public.notifications
+  FOR EACH ROW
+  EXECUTE FUNCTION public.enforce_notification_recipient_role();
+
 ALTER TABLE public.support_tickets
   DROP CONSTRAINT IF EXISTS support_tickets_assigned_staff_id_fkey,
   ADD CONSTRAINT support_tickets_assigned_staff_id_fkey
@@ -569,17 +600,33 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO service_role;
 GRANT SELECT ON public.notifications TO authenticated;
 GRANT UPDATE (read_at) ON public.notifications TO authenticated;
 
+CREATE OR REPLACE FUNCTION public.can_access_notifications()
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.users
+    WHERE id = auth.uid() AND role IN ('patient', 'doctor', 'staff')
+  );
+$$;
+
+REVOKE ALL ON FUNCTION public.can_access_notifications() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.can_access_notifications() TO authenticated;
+
 DROP POLICY IF EXISTS "Users can read their own notifications" ON public.notifications;
 CREATE POLICY "Users can read their own notifications"
   ON public.notifications
   FOR SELECT
   TO authenticated
-  USING (auth.uid() = user_id);
+  USING (auth.uid() = user_id AND public.can_access_notifications());
 
 DROP POLICY IF EXISTS "Users can update their own notifications" ON public.notifications;
 CREATE POLICY "Users can update their own notifications"
   ON public.notifications
   FOR UPDATE
   TO authenticated
-  USING (auth.uid() = user_id)
-  WITH CHECK (auth.uid() = user_id);
+  USING (auth.uid() = user_id AND public.can_access_notifications())
+  WITH CHECK (auth.uid() = user_id AND public.can_access_notifications());

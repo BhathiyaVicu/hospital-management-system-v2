@@ -40,6 +40,12 @@ const adminNavigationItems = [
   { label: 'Support', to: '/admin/support' },
 ];
 
+const supportLinks = {
+  patient: { to: '/support', desktopLabel: 'Help & Support', mobileLabel: 'Support' },
+  admin: { to: '/admin/support', desktopLabel: 'Support & inquiries', mobileLabel: 'Manage Tickets' },
+  staff: { to: '/staff/support', desktopLabel: 'Support Queue', mobileLabel: 'Manage Tickets' },
+};
+
 const navLinkClass = ({ isActive }) => `rounded-lg px-4 py-2 text-base font-medium transition ${
   isActive
     ? 'bg-surface-container-high text-on-surface'
@@ -185,7 +191,7 @@ export default function NavigationBar() {
         <div className="flex shrink-0 items-center gap-1 sm:gap-3">
           {user ? (
             <>
-            <NotificationBell />
+            {['patient', 'doctor', 'staff'].includes(role) && <NotificationBell />}
             <div className="relative hidden sm:block" data-profile-menu>
               <button
                 type="button"
@@ -232,15 +238,17 @@ export default function NavigationBar() {
                         My Appointments
                       </Link>
                     )}
-                    <Link
-                      to={role === 'patient' ? '/support' : role === 'admin' ? '/admin/support' : role === 'staff' ? '/staff/support' : '/notifications'}
-                      onClick={() => setProfileOpen(false)}
-                      className="flex items-center gap-3 px-4 py-2.5 text-sm text-on-surface transition hover:bg-surface-container"
-                      role="menuitem"
-                    >
-                      <span className="material-symbols-outlined text-[20px] text-primary">shield_person</span>
-                      {role === 'patient' ? 'Help & Support' : 'Support Queue'}
-                    </Link>
+                    {supportLinks[role] && (
+                      <Link
+                        to={supportLinks[role].to}
+                        onClick={() => setProfileOpen(false)}
+                        className="flex items-center gap-3 px-4 py-2.5 text-sm text-on-surface transition hover:bg-surface-container"
+                        role="menuitem"
+                      >
+                        <span className="material-symbols-outlined text-[20px] text-primary">shield_person</span>
+                        {supportLinks[role].desktopLabel}
+                      </Link>
+                    )}
                   </div>
 
                   <div className="border-t border-slate-100 py-1">
@@ -308,14 +316,16 @@ export default function NavigationBar() {
 
             {user ? (
               <>
-                <Link
-                  to="/notifications"
-                  onClick={closeMenu}
-                  className="flex items-center gap-3 rounded-lg px-4 py-2.5 text-sm text-on-surface hover:bg-surface-container"
-                >
-                  <span className="material-symbols-outlined text-[20px] text-primary">notifications</span>
-                  Notifications
-                </Link>
+                {['patient', 'doctor', 'staff'].includes(role) && (
+                  <Link
+                    to="/notifications"
+                    onClick={closeMenu}
+                    className="flex items-center gap-3 rounded-lg px-4 py-2.5 text-sm text-on-surface hover:bg-surface-container"
+                  >
+                    <span className="material-symbols-outlined text-[20px] text-primary">notifications</span>
+                    Notifications
+                  </Link>
+                )}
                 <div className="mt-2 flex items-center gap-3 rounded-xl bg-surface-container-low px-3 py-3">
                   <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-on-primary">
                     {initials(user.name)}
@@ -343,14 +353,16 @@ export default function NavigationBar() {
                     My Appointments
                   </Link>
                 )}
-                <Link
-                  to={role === 'patient' ? '/support' : role === 'admin' ? '/admin/support' : role === 'staff' ? '/staff/support' : '/notifications'}
-                  onClick={closeMenu}
-                  className="flex items-center gap-3 rounded-lg px-4 py-2.5 text-sm text-on-surface hover:bg-surface-container"
-                >
-                  <span className="material-symbols-outlined text-[20px] text-primary">shield_person</span>
-                  {role === 'patient' ? 'Support' : 'Manage Tickets'}
-                </Link>
+                {supportLinks[role] && (
+                  <Link
+                    to={supportLinks[role].to}
+                    onClick={closeMenu}
+                    className="flex items-center gap-3 rounded-lg px-4 py-2.5 text-sm text-on-surface hover:bg-surface-container"
+                  >
+                    <span className="material-symbols-outlined text-[20px] text-primary">shield_person</span>
+                    {supportLinks[role].mobileLabel}
+                  </Link>
+                )}
                 <button
                   type="button"
                   onClick={handleLogout}

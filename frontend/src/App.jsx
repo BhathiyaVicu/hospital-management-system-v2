@@ -87,7 +87,7 @@ function AppShell() {
           <Route path="/help" element={<PublicOnlyRoute><HelpPage /></PublicOnlyRoute>} />
           <Route path="/change-password" element={<RequireAuth roles={['patient', 'doctor', 'staff', 'receptionist', 'admin']}><ChangePasswordPage /></RequireAuth>} />
           <Route path="/first-login" element={<RequireAuth roles={['patient', 'doctor', 'staff', 'receptionist', 'admin']}><FirstLoginPage /></RequireAuth>} />
-          <Route path="/notifications" element={<RequireAuth roles={['patient', 'doctor', 'staff', 'receptionist', 'admin']}><NotificationsPage /></RequireAuth>} />
+          <Route path="/notifications" element={<RequireAuth roles={['patient', 'doctor', 'staff']}><NotificationsPage /></RequireAuth>} />
 
           {/* PATIENT ROUTES (Dashboard) */}
           <Route path="/dashboard" element={<RequireAuth roles={['patient']}><PatientDashboardPage /></RequireAuth>} />

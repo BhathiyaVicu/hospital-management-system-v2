@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { getCurrentUser, logoutUser } from '../../services/api';
-import NotificationBell from '../layout/NotificationBell';
 
 const navigation = [
   { section: 'Overview', links: [['Dashboard', '/admin/dashboard', 'dashboard']] },
@@ -134,7 +133,6 @@ export default function AdminLayout({ children }) {
             <div className="min-w-0"><p className="truncate text-sm font-semibold">{activeSection?.[0] || 'Admin workspace'}</p><p className="hidden text-xs text-on-surface-variant sm:block">Administration · MediConnect</p></div>
           </div>
           <div className="flex items-center gap-2 sm:gap-4">
-            <NotificationBell />
             <span className="hidden max-w-48 truncate text-sm text-on-surface-variant sm:block">{user?.email}</span>
             <span className="flex h-9 w-9 items-center justify-center rounded-full bg-primary text-sm font-semibold text-on-primary">{(user?.name || 'A').slice(0, 1).toUpperCase()}</span>
           </div>

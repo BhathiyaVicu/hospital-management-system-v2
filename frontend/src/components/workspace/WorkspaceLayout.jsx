@@ -124,7 +124,7 @@ export default function WorkspaceLayout({ role, children }) {
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <NotificationBell />
+            {role === 'doctor' && <NotificationBell />}
             <span className="hidden max-w-52 truncate text-sm text-on-surface-variant sm:block">{user?.email}</span>
             <span className="flex h-9 w-9 items-center justify-center rounded-full bg-primary text-sm font-semibold text-on-primary">{(user?.name || 'M').slice(0, 1).toUpperCase()}</span>
           </div>

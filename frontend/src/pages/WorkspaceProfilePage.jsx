@@ -10,7 +10,7 @@ import {
 
 const emptyDoctor = {
   name: '', email: '', phone: '', title: '', bio: '', yearsOfExperience: '',
-  education: '', languages: [], timeZone: 'UTC', image: '',
+  education: '', languages: [], image: '',
 };
 const inputClass = 'mt-1.5 min-h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/15';
 
@@ -49,7 +49,6 @@ export default function WorkspaceProfilePage({ role }) {
           yearsOfExperience: values.yearsOfExperience === '' ? null : Number(values.yearsOfExperience),
           education: values.education || '',
           languages: Array.isArray(values.languages) ? values.languages : String(values.languages || '').split(',').map((item) => item.trim()).filter(Boolean),
-          timeZone: values.timeZone,
           image: values.image || null,
         });
       } else {
@@ -81,7 +80,6 @@ export default function WorkspaceProfilePage({ role }) {
             {isDoctor && <>
               <label className="text-sm font-medium">Professional title<input value={values.title} onChange={(event) => update('title', event.target.value)} className={inputClass} required maxLength={120} /></label>
               <label className="text-sm font-medium">Years of experience<input type="number" min="0" max="80" value={values.yearsOfExperience} onChange={(event) => update('yearsOfExperience', event.target.value)} className={inputClass} /></label>
-              <label className="text-sm font-medium">Time zone<input value={values.timeZone} onChange={(event) => update('timeZone', event.target.value)} className={inputClass} required maxLength={80} /></label>
               <label className="text-sm font-medium">Profile image URL<input type="url" value={values.image || ''} onChange={(event) => update('image', event.target.value)} className={inputClass} /></label>
               <label className="text-sm font-medium sm:col-span-2">Languages (comma-separated)<input value={Array.isArray(values.languages) ? values.languages.join(', ') : values.languages || ''} onChange={(event) => update('languages', event.target.value)} className={inputClass} /></label>
               <label className="text-sm font-medium sm:col-span-2">Education<textarea value={values.education || ''} onChange={(event) => update('education', event.target.value)} rows={3} maxLength={2000} className={`${inputClass} h-auto`} /></label>

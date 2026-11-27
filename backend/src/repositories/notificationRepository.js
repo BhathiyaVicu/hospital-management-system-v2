@@ -4,6 +4,14 @@ import { run, pagedRows } from './supabaseHelpers.js';
 export async function create({
   userId, title, message, link = null, type = 'general', metadata = {}, dedupeKey = null,
 }) {
+  const { data: recipient } = await run(supabaseAdmin.from('users').select('role')
+    .eq('id', userId).maybeSingle());
+  if (!recipient || !['patient', 'doctor', 'staff'].includes(recipient.role)) {
+    const error = new Error('Notifications are only available to patient, doctor, and staff accounts.');
+    error.status = 403;
+    throw error;
+  }
+
   const notification = {
     user_id: userId, title, message, link, type, metadata, dedupe_key: dedupeKey,
   };

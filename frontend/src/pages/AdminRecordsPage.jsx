@@ -91,7 +91,6 @@ const configs = {
       { key: 'image', label: 'Profile image URL', type: 'url' },
       { key: 'clinicId', label: 'Clinic', type: 'select', optionsKey: 'clinics' },
       { key: 'primarySpecialtyId', label: 'Primary specialty', type: 'select', optionsKey: 'specialties', required: true },
-      { key: 'timeZone', label: 'Time zone', defaultValue: 'Asia/Colombo', required: true },
       { key: 'languages', label: 'Languages (comma-separated)', type: 'comma' },
       { key: 'education', label: 'Education', type: 'textarea' },
       { key: 'bio', label: 'Professional overview', type: 'textarea' },
@@ -596,7 +595,7 @@ export default function AdminRecordsPage({ resource }) {
             <dl className="grid gap-3 sm:grid-cols-2">
               {Object.entries(detail)
                 .filter(([key, value]) => 
-                  !['id', 'userId', 'patientId', 'clinicId', 'appointments', 'tickets', 'availability', 'primarySpecialtyId', 'languages', 'currency'].includes(key) 
+                  !['id', 'userId', 'patientId', 'clinicId', 'appointments', 'tickets', 'availability', 'primarySpecialtyId', 'languages', 'currency', 'timeZone'].includes(key) 
                   && value !== null 
                   && typeof value !== 'object'
                 )
@@ -653,7 +652,7 @@ export default function AdminRecordsPage({ resource }) {
       {error && <AdminNotice>{error}</AdminNotice>}
       <AdminSection>
         <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <label className="block"><span className="sr-only">Search records</span><input value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} placeholder="Search name, email or details" className="h-11 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-primary" /></label>
+          <label className="block"><span className="sr-only">Search records</span><input value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} placeholder="Search" className="h-11 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-primary" /></label>
           {config.statusFilter !== false && <select aria-label="Filter by account status" value={status} onChange={(event) => { setStatus(event.target.value); setPage(0); }} className="h-11 rounded-lg border border-slate-200 bg-white px-3 text-sm"><option value="">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option></select>}
           {config.filters?.includes('specialtyId') && <select aria-label="Filter by specialty" value={specialtyId} onChange={(event) => setSpecialtyId(event.target.value)} className="h-11 rounded-lg border border-slate-200 bg-white px-3 text-sm"><option value="">All specialties</option>{lookups.specialties.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>}
           {config.filters?.includes('clinicId') && <select aria-label="Filter by clinic" value={clinicId} onChange={(event) => setClinicId(event.target.value)} className="h-11 rounded-lg border border-slate-200 bg-white px-3 text-sm"><option value="">All clinics</option>{lookups.clinics.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>}
