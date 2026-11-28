@@ -8,7 +8,7 @@ import {
   updateReceptionistPatient,
 } from '../services/api';
 
-const inputClass = 'mt-1.5 min-h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/15';
+const inputClass = 'mt-1.5 min-h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15';
 
 export default function ReceptionistPatientsPage() {
   const [clinics, setClinics] = useState([]);
@@ -29,7 +29,9 @@ export default function ReceptionistPatientsPage() {
       if (search.trim()) {
         const { data } = await getReceptionistPatients({ search: search.trim(), limit: 100 });
         setPatients(data || []);
-      } else setPatients([]);
+      } else {
+        setPatients([]);
+      }
     } catch (requestError) {
       setError(requestError.message || 'Unable to search clinic patients.');
     }
@@ -87,24 +89,169 @@ export default function ReceptionistPatientsPage() {
 
   return (
     <WorkspaceLayout role="receptionist">
-      <PortalHeading eyebrow="Reception workspace · patient services" title="Patient directory" description="Search patients connected to your assigned clinics, update contact details, and register new patients." actions={<button type="button" onClick={() => setShowNew(!showNew)} className="min-h-11 rounded-lg bg-primary px-4 text-sm font-semibold text-on-primary">{showNew ? 'Close form' : 'Register patient'}</button>} />
-      {error && <p role="alert" className="mb-4 rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p>}
-      {notice && <p role="status" className="mb-4 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800">{notice}</p>}
-      {loading ? <p className="py-12 text-center text-on-surface-variant">Loading clinics...</p> : (
-        <>
-          {showNew && <form onSubmit={register} className="mb-5 rounded-2xl bg-surface-container-lowest p-4 shadow-sm ring-1 ring-slate-200 sm:p-6"><h2 className="text-lg font-semibold">Register a patient</h2><p className="mt-1 text-sm text-on-surface-variant">An email verification link is sent to the patient. They can set a password using Forgot password after verification.</p><div className="mt-4 grid gap-3 sm:grid-cols-2"><label className="text-sm font-medium">Clinic<select value={clinicId} onChange={(event) => setClinicId(event.target.value)} className={inputClass} required>{clinics.map((clinic) => <option key={clinic.id} value={clinic.id}>{clinic.name}</option>)}</select></label><label className="text-sm font-medium">Full name<input value={newPatient.name} onChange={(event) => setNewPatient({ ...newPatient, name: event.target.value })} className={inputClass} required maxLength={120} /></label><label className="text-sm font-medium">Email address<input type="email" value={newPatient.email} onChange={(event) => setNewPatient({ ...newPatient, email: event.target.value })} className={inputClass} required maxLength={254} /></label><label className="text-sm font-medium">Phone<input value={newPatient.phone} onChange={(event) => setNewPatient({ ...newPatient, phone: event.target.value })} className={inputClass} maxLength={32} /></label></div><button type="submit" disabled={saving || !clinicId} className="mt-4 min-h-11 rounded-lg bg-primary px-4 text-sm font-semibold text-on-primary disabled:opacity-60">{saving ? 'Registering...' : 'Register patient'}</button></form>}
-          <section className="rounded-2xl bg-surface-container-lowest p-4 shadow-sm ring-1 ring-slate-200 sm:p-6">
-            <div className="grid gap-3 sm:grid-cols-[1fr_auto]"><label className="text-sm font-medium">Search by name, email, or phone<input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Enter at least one search term" className={inputClass} /></label><div className="self-end text-sm text-on-surface-variant">Clinic-scoped results: {patients.length}</div></div>
-            {patients.length ? <div className="mt-4 space-y-3">{patients.map((patient) => (
-              <article key={patient.id} className="flex flex-col gap-3 rounded-xl border border-slate-200 p-4 sm:flex-row sm:items-center sm:justify-between">
-                <div className="min-w-0"><p className="font-semibold">{patient.name}</p><p className="mt-1 break-all text-sm text-on-surface-variant">{patient.email} · {patient.phone || 'No phone'}</p></div>
-                <button type="button" onClick={() => setEditing({ id: patient.id, name: patient.name, phone: patient.phone || '' })} className="min-h-10 shrink-0 rounded-lg border border-slate-200 px-3 text-sm font-semibold text-primary">Edit contact</button>
-              </article>
-            ))}</div> : <p className="mt-4 rounded-xl bg-surface-container-low p-8 text-center text-sm text-on-surface-variant">{search.trim() ? 'No patients were found for that search.' : 'Search by a patient name, email, or phone number.'}</p>}
-          </section>
-        </>
+      <PortalHeading 
+        eyebrow="Reception workspace · patient services" 
+        title="Patient directory" 
+        description="Search patients connected to your assigned clinics, update contact details, and register new patients." 
+        actions={
+          <button 
+            type="button" 
+            onClick={() => setShowNew(!showNew)} 
+            className={`inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold shadow-sm transition ${showNew ? 'bg-surface-container text-on-surface hover:bg-surface-container-high' : 'bg-primary text-on-primary hover:bg-primary-container'}`}
+          >
+            <span className="material-symbols-outlined text-lg">{showNew ? 'close' : 'person_add'}</span>
+            {showNew ? 'Close form' : 'Register patient'}
+          </button>
+        } 
+      />
+      
+      {error && <p role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</p>}
+      {notice && <p role="status" className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">{notice}</p>}
+
+      {loading ? (
+        <p className="py-12 text-center text-on-surface-variant">Loading clinics...</p>
+      ) : (
+        <div className="grid gap-6 lg:grid-cols-[1fr_350px]">
+          
+          {/* LEFT: Search and Patient List */}
+          <div className="space-y-4">
+            <div className="rounded-2xl bg-surface-container-lowest p-5 shadow-sm ring-1 ring-slate-200">
+              <label className="block">
+                <span className="mb-1.5 block text-sm font-medium text-on-surface">Search directory</span>
+                <div className="relative">
+                  <span className="material-symbols-outlined absolute left-3 top-3 text-on-surface-variant">search</span>
+                  <input 
+                    value={search} 
+                    onChange={(event) => setSearch(event.target.value)} 
+                    placeholder="Search by name, email, or phone..." 
+                    className={`${inputClass} pl-10`} 
+                  />
+                </div>
+              </label>
+            </div>
+
+            {patients.length > 0 ? (
+              <div className="grid gap-3 sm:grid-cols-2">
+                {patients.map((patient) => (
+                  <article key={patient.id} className="flex flex-col justify-between rounded-xl border border-slate-200 bg-surface-container-lowest p-4 shadow-sm transition hover:border-primary/30 hover:shadow-md">
+                    <div>
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-primary">
+                          <span className="material-symbols-outlined text-[18px]">person</span>
+                        </span>
+                        <p className="font-semibold text-on-surface truncate">{patient.name}</p>
+                      </div>
+                      <div className="space-y-1 text-sm text-on-surface-variant">
+                        <p className="flex items-center gap-1.5 truncate">
+                          <span className="material-symbols-outlined text-[16px]">mail</span>
+                          {patient.email}
+                        </p>
+                        <p className="flex items-center gap-1.5 truncate">
+                          <span className="material-symbols-outlined text-[16px]">call</span>
+                          {patient.phone || 'No phone'}
+                        </p>
+                      </div>
+                    </div>
+                    <button 
+                      type="button" 
+                      onClick={() => setEditing({ id: patient.id, name: patient.name, phone: patient.phone || '' })} 
+                      className="mt-4 w-full rounded-lg bg-surface-container py-2 text-xs font-semibold text-on-surface transition hover:bg-surface-container-high"
+                    >
+                      Edit contact
+                    </button>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-xl border border-slate-200 bg-surface-container-lowest p-10 text-center">
+                <span className="material-symbols-outlined text-4xl text-slate-300">person_search</span>
+                <p className="mt-2 font-medium text-on-surface">
+                  {search.trim() ? 'No patients found' : 'Search for a patient'}
+                </p>
+                <p className="text-sm text-on-surface-variant">
+                  {search.trim() ? 'Try a different name, email, or phone number.' : 'Enter a name, email, or phone number to start searching.'}
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* RIGHT: Registration Form */}
+          <div>
+            {showNew && (
+              <form onSubmit={register} className="sticky top-24 rounded-2xl border border-primary/20 bg-surface-container-lowest p-5 shadow-lg ring-4 ring-primary/5">
+                <div className="mb-4 flex items-center gap-2">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary">
+                    <span className="material-symbols-outlined">person_add</span>
+                  </span>
+                  <h2 className="text-lg font-semibold text-on-surface">Register a patient</h2>
+                </div>
+                
+                <p className="mb-4 rounded-lg bg-surface-container-low p-3 text-xs leading-relaxed text-on-surface-variant">
+                  <strong>Note:</strong> An email verification link will be sent to the patient. They can set a password using the <em>Forgot password</em> flow after verification.
+                </p>
+
+                <div className="space-y-4">
+                  <label className="block text-sm font-medium text-on-surface">
+                    Clinic
+                    <select value={clinicId} onChange={(event) => setClinicId(event.target.value)} className={inputClass} required>
+                      {clinics.map((clinic) => <option key={clinic.id} value={clinic.id}>{clinic.name}</option>)}
+                    </select>
+                  </label>
+                  <label className="block text-sm font-medium text-on-surface">
+                    Full name
+                    <input value={newPatient.name} onChange={(event) => setNewPatient({ ...newPatient, name: event.target.value })} className={inputClass} required maxLength={120} placeholder="e.g. Nuwan Perera" />
+                  </label>
+                  <label className="block text-sm font-medium text-on-surface">
+                    Email address
+                    <input type="email" value={newPatient.email} onChange={(event) => setNewPatient({ ...newPatient, email: event.target.value })} className={inputClass} required maxLength={254} placeholder="patient@example.com" />
+                  </label>
+                  <label className="block text-sm font-medium text-on-surface">
+                    Phone
+                    <input value={newPatient.phone} onChange={(event) => setNewPatient({ ...newPatient, phone: event.target.value })} className={inputClass} maxLength={32} placeholder="07X XXX XXXX" />
+                  </label>
+                </div>
+
+                <button type="submit" disabled={saving || !clinicId} className="mt-6 w-full rounded-lg bg-primary py-3 text-sm font-semibold text-on-primary shadow-sm transition hover:bg-primary-container disabled:opacity-60">
+                  {saving ? 'Registering...' : 'Register patient'}
+                </button>
+              </form>
+            )}
+          </div>
+        </div>
       )}
-      {editing && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-3"><form onSubmit={saveContact} className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-2xl"><h2 className="text-lg font-semibold">Update patient contact</h2><label className="mt-4 block text-sm font-medium">Full name<input value={editing.name} onChange={(event) => setEditing({ ...editing, name: event.target.value })} className={inputClass} required /></label><label className="mt-3 block text-sm font-medium">Phone<input value={editing.phone} onChange={(event) => setEditing({ ...editing, phone: event.target.value })} className={inputClass} /></label><p className="mt-2 text-xs text-on-surface-variant">Email is not editable here because it is also the patient’s verified sign-in identity.</p><div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setEditing(null)} className="min-h-10 rounded-lg border border-slate-200 px-3 text-sm font-semibold">Cancel</button><button type="submit" disabled={saving} className="min-h-10 rounded-lg bg-primary px-3 text-sm font-semibold text-on-primary disabled:opacity-60">{saving ? 'Saving...' : 'Save contact'}</button></div></form></div>}
+
+      {/* Edit Modal */}
+      {editing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
+          <form onSubmit={saveContact} className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+            <h2 className="text-xl font-semibold text-on-surface mb-4">Update patient contact</h2>
+            
+            <div className="space-y-4">
+              <label className="block text-sm font-medium text-on-surface">
+                Full name
+                <input value={editing.name} onChange={(event) => setEditing({ ...editing, name: event.target.value })} className={inputClass} required />
+              </label>
+              <label className="block text-sm font-medium text-on-surface">
+                Phone number
+                <input value={editing.phone} onChange={(event) => setEditing({ ...editing, phone: event.target.value })} className={inputClass} />
+              </label>
+            </div>
+
+            <p className="mt-3 text-xs text-on-surface-variant bg-surface-container-low p-2 rounded">
+              Email cannot be edited here because it is the patient's verified sign-in identity.
+            </p>
+
+            <div className="mt-6 flex justify-end gap-3 border-t border-slate-100 pt-4">
+              <button type="button" onClick={() => setEditing(null)} className="min-h-10 rounded-lg px-4 text-sm font-semibold text-on-surface-variant hover:bg-surface-container">
+                Cancel
+              </button>
+              <button type="submit" disabled={saving} className="min-h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-on-primary disabled:opacity-60">
+                {saving ? 'Saving...' : 'Save changes'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </WorkspaceLayout>
   );
 }

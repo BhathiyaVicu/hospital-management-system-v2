@@ -53,7 +53,7 @@ import {
 } from '../validators/admin.js';
 
 const router = Router();
-router.use(authenticate, requireVerifiedEmail, requireRole('admin'));
+router.use(authenticate, requireVerifiedEmail, requireRole('admin', 'receptionist'));
 const superAdminOnly = [requireSuperAdmin];
 
 router.get('/dashboard', controller.dashboard);

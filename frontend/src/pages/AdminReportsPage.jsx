@@ -37,50 +37,107 @@ function downloadCsv(title, columns, rows) {
 
 function addPdfChart(doc, title, values, labelKey = 'label', valueKey = 'count', chartType = 'bar') {
   if (!values.length) return doc.lastAutoTable?.finalY ? doc.lastAutoTable.finalY + 10 : 35;
+  
   let y = doc.lastAutoTable?.finalY ? doc.lastAutoTable.finalY + 12 : 35;
-  if (y > 150) {
+  if (y > 120) {
     doc.addPage();
     y = 24;
   }
+
   doc.setFontSize(12);
   doc.setTextColor(25, 54, 51);
   doc.text(title, 14, y);
-  const chartTop = y + 8;
-  const chartWidth = 250;
+
+  const chartTop = y + 10;
+  const chartWidth = 180; // Use full width available
+  const chartHeight = 60; 
+  const chartX = 50; // Start X (leaves room for labels)
+
+  const maxValue = Math.max(1, ...values.map((item) => Number(item[valueKey] || 0)));
+
   if (chartType === 'trend') {
-    const maxValue = Math.max(1, ...values.map((item) => Number(item[valueKey] || 0)));
-    const points = values.map((item, index) => ({
-      x: 14 + (values.length < 2 ? 0 : (index / (values.length - 1)) * chartWidth),
-      y: chartTop + 60 - (Number(item[valueKey] || 0) / maxValue) * 55,
-    }));
-    doc.setDrawColor(0, 104, 95);
-    doc.setLineWidth(0.7);
-    for (let index = 1; index < points.length; index += 1) {
-      doc.line(points[index - 1].x, points[index - 1].y, points[index].x, points[index].y);
+    // Draw Axes for Trend Chart
+    doc.setDrawColor(200, 200, 200);
+    doc.setLineWidth(0.3);
+    doc.line(chartX, chartTop, chartX, chartTop + chartHeight);
+    doc.line(chartX, chartTop + chartHeight, chartX + chartWidth, chartTop + chartHeight);
+
+    const gridLines = 4;
+    doc.setFontSize(7);
+    
+    // Grid & Y-Axis Labels
+    for (let i = 0; i <= gridLines; i++) {
+      const gridY = chartTop + chartHeight - (chartHeight / gridLines) * i;
+      doc.setDrawColor(240, 240, 240);
+      doc.line(chartX, gridY, chartX + chartWidth, gridY);
+      
+      const val = Math.round((maxValue / gridLines) * i);
+      doc.setTextColor(150, 150, 150);
+      doc.text(String(val), chartX - 3, gridY + 2, { align: 'right' });
     }
-    doc.setFontSize(8);
-    doc.setTextColor(65, 81, 78);
-    doc.text(String(values[0][labelKey]), 14, chartTop + 72);
-    doc.text(String(values[Math.floor(values.length / 2)][labelKey]), 14 + chartWidth / 2, chartTop + 72, { align: 'center' });
-    doc.text(String(values[values.length - 1][labelKey]), 14 + chartWidth, chartTop + 72, { align: 'right' });
-    return chartTop + 80;
-  }
-  const maxBars = Math.min(values.length, 12);
-  const barHeight = Math.min(7, 72 / maxBars);
-  const maxValue = Math.max(1, ...values.slice(0, maxBars).map((item) => Number(item[valueKey] || 0)));
-  values.slice(0, maxBars).forEach((item, index) => {
-    const barY = chartTop + index * (barHeight + 1);
-    const label = String(item[labelKey] ?? '').replaceAll('_', ' ').slice(0, 30);
-    const value = Number(item[valueKey] || 0);
-    doc.setFontSize(8);
-    doc.setTextColor(65, 81, 78);
-    doc.text(label, 14, barY + barHeight - 1);
+
+    // Points
+    const points = values.map((item, index) => ({
+      x: chartX + (values.length < 2 ? 0 : (index / (values.length - 1)) * chartWidth),
+      y: chartTop + chartHeight - ((Number(item[valueKey]) || 0) / maxValue) * chartHeight,
+      label: String(item[labelKey]),
+    }));
+
+    // Fill Area
+    doc.setFillColor(0, 104, 95, 0.1); 
+    for (let i = 0; i < points.length - 1; i++) {
+      doc.triangle(points[i].x, points[i].y, points[i].x, chartTop + chartHeight, points[i+1].x, chartTop + chartHeight, 'F');
+      doc.triangle(points[i].x, points[i].y, points[i+1].x, points[i+1].y, points[i+1].x, chartTop + chartHeight, 'F');
+    }
+
+    // Line & Dots
+    doc.setDrawColor(0, 104, 95);
+    doc.setLineWidth(0.8);
+    for (let i = 1; i < points.length; i++) {
+      doc.line(points[i - 1].x, points[i - 1].y, points[i].x, points[i].y);
+    }
     doc.setFillColor(0, 104, 95);
-    doc.rect(92, barY, chartWidth * value / maxValue, barHeight, 'F');
+    points.forEach(p => doc.circle(p.x, p.y, 0.8, 'F'));
+
+    // X-Axis Labels
+    doc.setTextColor(100, 100, 100);
+    if (values.length > 0) {
+      doc.text(points[0].label, points[0].x, chartTop + chartHeight + 6, { align: 'center' });
+      doc.text(points[Math.floor(points.length / 2)].label, points[Math.floor(points.length / 2)].x, chartTop + chartHeight + 6, { align: 'center' });
+      doc.text(points[points.length - 1].label, points[points.length - 1].x, chartTop + chartHeight + 6, { align: 'center' });
+    }
+    return chartTop + chartHeight + 12;
+  }
+
+  // --- BAR CHART ---
+  // Removed the grid lines and Y-axis numbers to make it a clean list.
+  
+  const maxBars = Math.min(values.length, 10);
+  const rowHeight = chartHeight / maxBars;
+  const barThickness = rowHeight * 0.6;
+
+  values.slice(0, maxBars).forEach((item, index) => {
+    const barY = chartTop + chartHeight - (index + 1) * rowHeight + (rowHeight - barThickness) / 2;
+    const barWidth = (Number(item[valueKey]) / maxValue) * chartWidth;
+    const label = String(item[labelKey] ?? '').replaceAll('_', ' ').slice(0, 20);
+
+    // Label (left)
+    doc.setFontSize(8);
+    doc.setTextColor(65, 81, 78);
+    doc.text(label, chartX - 3, barY + barThickness / 2 + 2, { align: 'right' });
+
+    // Bar
+    doc.setFillColor(0, 104, 95);
+    if (barWidth > 0.5) {
+      doc.rect(chartX, barY, barWidth, barThickness, 'F');
+    }
+
+    // Value text (right of bar)
     doc.setTextColor(25, 54, 51);
-    doc.text(String(value), 96 + chartWidth * value / maxValue, barY + barHeight - 1);
+    doc.text(String(item[valueKey]), chartX + barWidth + 2, barY + barThickness / 2 + 2);
   });
-  return chartTop + maxBars * (barHeight + 1) + 4;
+
+  return chartTop + chartHeight + 10;
 }
 
 function exportPdf(filters, reports, view, lookups) {
@@ -334,7 +391,7 @@ export default function AdminReportsPage() {
         </form>
       </AdminSection>
       {loading && !reports ? <p className="py-12 text-center text-on-surface-variant">Generating reports...</p> : reports && view && (
-        <div className="mt-5 space-y-5">
+        <div className="mt-5 space-y-5 min-w-0">
           <section aria-label="Appointment totals" className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
             <AdminStatCard label="Appointments" value={reports.summary.total} icon="event" />
             <AdminStatCard label="Completed" value={reports.summary.completed} icon="task_alt" accent="blue" />
@@ -346,28 +403,35 @@ export default function AdminReportsPage() {
           {appliedFilters.reportType === 'service-trends' && (
             <AdminNotice type="info">{reports.serviceUsageNote}</AdminNotice>
           )}
+          
+          {/* 👇 FIXED GRID & CHART OVERFLOW HERE 👇 */}
           <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
             <AdminSection title={view.chart.title} description="Counts are based on scheduled appointment start times in the selected date range.">
-              <AdminTrendChart title={`${groupingLabel[0].toUpperCase()}${groupingLabel.slice(1)} appointment volume`} data={reports.appointmentTrend} grouping={appliedFilters.grouping} />
-              {appliedFilters.reportType === 'service-trends' && <div className="mt-6"><AdminBarList title="Appointments by specialty" rows={reports.appointmentsBySpecialty} labelKey="name" valueKey="total" /></div>}
-              {appliedFilters.reportType === 'operational' && (
-                <div className="mt-6 grid gap-6 md:grid-cols-2">
-                  <AdminBarList title="Visit type" rows={reports.consultationTypes} labelKey="type" />
-                  <AdminBarList title="Appointment outcome" rows={reports.appointmentsByStatus} labelKey="status" />
-                </div>
-              )}
-              {appliedFilters.reportType === 'clinic-activity' && <div className="mt-6"><AdminBarList title="Appointments by clinic" rows={reports.appointmentsByClinic} labelKey="name" valueKey="total" /></div>}
-              {appliedFilters.reportType === 'operational' && (
-                <div className="mt-6 grid gap-6 md:grid-cols-2">
-                  <AdminTrendChart title="Cancellations" data={reports.cancellationTrend} grouping={appliedFilters.grouping} />
-                  <AdminTrendChart title="Reschedules" data={reports.rescheduleTrend} grouping={appliedFilters.grouping} />
-                </div>
-              )}
+              <div className="min-w-0 w-full overflow-hidden">
+                <AdminTrendChart title={`${groupingLabel[0].toUpperCase()}${groupingLabel.slice(1)} appointment volume`} data={reports.appointmentTrend} grouping={appliedFilters.grouping} />
+                {appliedFilters.reportType === 'service-trends' && <div className="mt-6"><AdminBarList title="Appointments by specialty" rows={reports.appointmentsBySpecialty} labelKey="name" valueKey="total" /></div>}
+                {appliedFilters.reportType === 'operational' && (
+                  <div className="mt-6 grid gap-6 md:grid-cols-2">
+                    <AdminBarList title="Visit type" rows={reports.consultationTypes} labelKey="type" />
+                    <AdminBarList title="Appointment outcome" rows={reports.appointmentsByStatus} labelKey="status" />
+                  </div>
+                )}
+                {appliedFilters.reportType === 'clinic-activity' && <div className="mt-6"><AdminBarList title="Appointments by clinic" rows={reports.appointmentsByClinic} labelKey="name" valueKey="total" /></div>}
+                {appliedFilters.reportType === 'operational' && (
+                  <div className="mt-6 grid gap-6 md:grid-cols-2">
+                    <AdminTrendChart title="Cancellations" data={reports.cancellationTrend} grouping={appliedFilters.grouping} />
+                    <AdminTrendChart title="Reschedules" data={reports.rescheduleTrend} grouping={appliedFilters.grouping} />
+                  </div>
+                )}
+              </div>
             </AdminSection>
             <AdminSection title={reportLabels[appliedFilters.reportType]} description={`Filtered results · ${formatAdminDate(appliedFilters.from)} — ${formatAdminDate(appliedFilters.to)}`}>
-              <AdminTable columns={view.columns} rows={view.rows} />
+              <div className="min-w-0 w-full overflow-x-auto">
+                <AdminTable columns={view.columns} rows={view.rows} />
+              </div>
             </AdminSection>
           </div>
+          
           {appliedFilters.reportType === 'service-trends' && (
             <AdminSection title="Specialty activity over time" description={`Appointments grouped by ${appliedFilters.grouping} period and doctors' primary specialty.`}>
               <AdminTable columns={[{ key: 'period', label: 'Period' }, { key: 'specialtyName', label: 'Specialty' }, { key: 'count', label: 'Appointments' }]} rows={reports.specialtyTrend} />

@@ -4,6 +4,7 @@ import { supabaseAdmin, supabaseAnon } from '../config/supabase.js';
 import * as authRepository from '../repositories/authRepository.js';
 import { run } from '../repositories/supabaseHelpers.js';
 import { recordActivity } from './auditService.js';
+import { randomBytes } from 'node:crypto';
 
 const GENERIC_RESET_MESSAGE = 'If an account exists for this email, password reset instructions will be sent.';
 const GENERIC_VERIFICATION_MESSAGE = 'If the account can be verified, a verification link will be sent.';
@@ -20,14 +21,17 @@ export async function register({ name, email, password, phone }) {
 }
 
 export async function registerPatientAtClinic({ name, email, phone, clinicId, actor, request }) {
-  const password = `${randomUUID()}${randomUUID()}!`;
+  const password = randomBytes(16).toString('hex');   
   const user = await authRepository.registerPatient({ name, email, password, phone });
+
   await run(supabaseAdmin.from('patient_clinics').insert({
     patient_id: user.patient_id, clinic_id: clinicId, created_by_user_id: actor.id,
   }));
+  
   await recordActivity({
     actor, targetUserId: user.id, eventType: 'patient.registered_by_receptionist', request, details: { clinicId },
   });
+  
   return {
     patientId: user.patient_id, name: user.name, email: user.email,
     message: 'Patient registered. They must verify their email, then use Forgot password to set their sign-in password.',

@@ -308,22 +308,27 @@ export async function receptionistAppointment(userId, appointmentId) {
 export async function bookReceptionistAppointment(user, values, request) {
   const clinicIds = await assignedClinicIds(user.id);
   if (!clinicIds.includes(values.clinicId)) throw httpError('This clinic is not assigned to your account.', 403);
+  
   const result = await receptionistRepository.createAppointment({
     ...values,
     createdByUserId: user.id,
     clinicIds,
   });
+  
   if (result.unavailable) throw httpError('The patient, clinic, doctor, or selected time is no longer available.', 409);
   await notifyAppointmentBooked(result.appointment);
+  
   await recordActivity({
     actor: { id: user.id, role: user.role },
-    targetUserId: values.patientId,
+    targetUserId: result.appointment.patient_user_id,
     eventType: values.isWalkIn ? 'receptionist.walk_in.booked' : 'receptionist.appointment.booked',
     request,
     details: { appointmentId: result.appointment.id, clinicId: values.clinicId, doctorId: values.doctorId },
   });
+  
   const appointment = { ...result.appointment };
   delete appointment.doctor_user_id;
+  delete appointment.patient_user_id; // optional: clean up the payload
   return appointment;
 }
 
